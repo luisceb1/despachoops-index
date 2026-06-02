@@ -20,7 +20,11 @@ from despachoops_index.safety import verify_scan_root
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="DespachoOps Index — solo lectura.")
-    parser.add_argument("--config", default="", help="config.yaml para ciclo nocturno/OCR/LLM")
+    parser.add_argument(
+        "--config",
+        default="config.yaml",
+        help="config.yaml (producción / nocturno). Usar antes del subcomando.",
+    )
     sub = parser.add_subparsers(dest="command", required=True)
 
     sub.add_parser("doctor", help="Comprueba red, ventana, OCR y Ollama")
@@ -58,7 +62,7 @@ def main(argv: list[str] | None = None) -> int:
     p_worker.add_argument("--force", action="store_true")
 
     args = parser.parse_args(argv)
-    config_path = Path(args.config) if args.config else Path("config.yaml")
+    config_path = Path(args.config).expanduser()
 
     if args.command == "init":
         return _cmd_init(config_path, force=args.force)

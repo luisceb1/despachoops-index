@@ -73,5 +73,8 @@ tests/
 ## Tests
 
 ```bash
-PYTHONPATH=src pytest
+pip install -e ".[dev]"
+pytest
 ```
+
+También funciona con `PYTHONPATH=src pytest` si no instalas el paquete en editable.
