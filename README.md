@@ -1,89 +1,77 @@
 # DespachoOps Index
 
-Herramienta de **solo lectura** para indexar y buscar la base documental del despacho, inspirada en [DespachoOps Autoarchivo](https://github.com/luisceb1/despachoops-autoarchivo). **No mueve, copia, renombra ni reestructura carpetas.**
+Herramienta **separada** de [Autoarchivo](https://github.com/luisceb1/despachoops-autoarchivo): indexación de **solo lectura**, búsqueda, dashboard Excel, **OCR nocturno**, **Ollama** y **worker** (23:00–06:00).
 
-Árbol indexado (producción):
+## Reglas
 
-`\\Luiscp\d\Cebrian y Fraile Abogados\Clientes`
+No mueve, copia, renombra, borra ni reorganiza carpetas. Sin waves, apply ni rename.
 
-Metadatos, SQLite, cola OCR, enriquecimiento LLM y logs viven en disco **local** (`C:\ProgramData\DespachoOps\Index` por defecto) para evitar bloqueos SMB.
+## Instalación
 
-## Ciclo nocturno (23:00–06:00)
-
-Orden por defecto en `night-cycle` / `worker`:
-
-1. **Índice SQLite + FTS5** — barrido incremental (solo archivos nuevos/modificados por `mtime`).
-2. **OCR** — hasta `max_files_per_ocr_run` PDF/imágenes; caché local.
-3. **Ollama** — hasta `llm.max_files_per_run` documentos usando **texto ya en SQLite o caché OCR** (no re-lee SMB).
-
-El **catálogo CSV completo** está **desactivado** en el ciclo nocturno (`catalog_each_night_cycle: false`) porque recorrería ~192k archivos en red cada noche. Ejecútalo manualmente cuando haga falta: `python despachoops_index.py catalog`.
-
-Condiciones de ejecución:
-
-- Ventana `night_window_start` – `night_window_end` (por defecto **23:00–06:00**).
-- Opcional: `require_idle_minutes` (Windows: tiempo sin input del usuario).
-
-## Instalación (Windows)
-
-```powershell
-cd "C:\ProyectosCoding\DespachoOps - Index"
+```bash
 python -m venv .venv
-.\.venv\Scripts\activate
+source .venv/bin/activate
 pip install -r requirements.txt
-python despachoops_index.py init
-python despachoops_index.py doctor --config config.yaml
 ```
 
-- **OCR:** [Tesseract](https://github.com/tesseract-ocr/tesseract) (`spa`) + [Poppler](https://blog.alivate.com.au/poppler-windows/).
-- **LLM:** [Ollama](https://ollama.com) en `http://localhost:11434` con el modelo de `config.yaml` (p. ej. `qwen3:8b`).
+Windows: Tesseract (`spa`) + Poppler para OCR; [Ollama](https://ollama.com) con `qwen3:8b` (o el modelo de `config.yaml`).
 
-```powershell
-ollama pull qwen3:8b
+```bash
+export PYTHONPATH=src
+python -m despachoops_index.cli init --config config.yaml
+python -m despachoops_index.cli doctor --config config.yaml
 ```
 
-## Comandos
+## CLI — MVP manual
 
-| Comando | Descripción |
-|---------|-------------|
-| `doctor` | Red, ventana, Tesseract, Ollama, pendientes LLM |
-| `catalog` | CSV inventario completo (uso puntual; carga SMB alta) |
-| `index` | Actualiza SQLite incremental |
-| `search "modelo 303"` | Búsqueda (incluye resumen LLM si existe) |
-| `ocr-worker` | Lote OCR nocturno |
-| `llm-enrich` | Lote Ollama (solo texto local) |
-| `night-cycle` | Índice + OCR + LLM |
-| `worker --once` | Un ciclo; Task Scheduler lo repite |
+```bash
+python -m despachoops_index.cli index --root "RUTA" --db data/despacho_index.sqlite --limit 1000
+python -m despachoops_index.cli index --root "RUTA" --db data/despacho_index.sqlite --limit 1000 --text
+python -m despachoops_index.cli search "consulta" --db data/despacho_index.sqlite --limit 20
+python -m despachoops_index.cli dashboard --db data/despacho_index.sqlite --output reports/index_dashboard.xlsx
+```
 
-## Ollama (`llm` en config.yaml)
+Con `config.yaml` (producción):
 
-Por documento, el modelo devuelve JSON: `tipo_documental`, `area`, `resumen`, `palabras_clave`, `confianza`, `necesita_revision`. Se guarda en la tabla `llm_enrichment` del SQLite local.
+```bash
+python -m despachoops_index.cli index --config config.yaml --text
+python -m despachoops_index.cli search "modelo 303" --config config.yaml
+python -m despachoops_index.cli ocr-worker --config config.yaml
+python -m despachoops_index.cli llm-enrich --config config.yaml
+python -m despachoops_index.cli night-cycle --config config.yaml
+python -m despachoops_index.cli worker --config config.yaml --once
+```
 
-- **Lote pequeño** (`max_files_per_run: 20`) para no competir con OCR/RAM.
-- **`release_model_after_batch: true`** libera VRAM tras cada ciclo.
-- Los datos sensibles **no salen del PC** si Ollama es local.
+## Ciclo nocturno
 
-## Automatización
+1. Índice incremental (lote `max_files_per_index_run`, solo cambios por `mtime`).
+2. OCR → caché local (`max_files_per_ocr_run`).
+3. Ollama → enriquecimiento desde SQLite/caché (**sin re-leer SMB**).
+
+Ventana **23:00–06:00** + `require_idle_minutes` (Windows). SQLite y cachés en `C:\ProgramData\DespachoOps\Index`.
+
+`catalog_each_night_cycle: false` evita barrido CSV completo cada noche (~192k archivos en SMB).
+
+## Task Scheduler
 
 ```powershell
 .\scripts\install_task_scheduler.ps1
 ```
 
-## Riesgos y mitigaciones
+## Estructura
 
-| Riesgo | Mitigación en Index |
-|--------|---------------------|
-| **SMB saturado** | Lotes index 5000 / OCR 150 / LLM 20; ventana 23:00–06:00; catálogo nocturno off |
-| **SQLite en red** | Solo `data_dir` local |
-| **Privacidad** | Índice, OCR cache y LLM en `C:\ProgramData\DespachoOps\Index`; proteger permisos NTFS |
-| **OCR CPU/RAM** | Pocas páginas; cola incremental |
-| **LLM CPU/RAM** | Pocos archivos/ciclo; modelo pequeño; `release_model_after_batch` |
-| **Inactividad** | `require_idle_minutes: 10` (Windows) |
-| **Primer índice ~192k** | Varios días; subir límites poco a poco |
+```
+src/despachoops_index/
+  cli.py, config.py, indexer.py, search.py, dashboard.py
+  ocr.py, ocr_worker.py, llm/, llm_enrichment.py
+  night_runner.py, night_window.py, walk.py, safety.py, idle.py
+config.yaml
+scripts/
+tests/
+```
 
-El módulo `safety` impide escribir bajo `scan_root`.
-
-## Desarrollo
+## Tests
 
 ```bash
-pytest
+PYTHONPATH=src pytest
 ```

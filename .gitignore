@@ -5,8 +5,5 @@ __pycache__/
 data/
 *.sqlite
 *.sqlite-journal
-ocr_cache/
-logs/
+reports/
 *.log
-ocr_jobs.csv
-.despachoops_index.lock
