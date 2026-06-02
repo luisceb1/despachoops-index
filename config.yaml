@@ -1,0 +1,73 @@
+# DespachoOps Index — solo lectura sobre la base de clientes.
+# Ajusta scan_root en el PC Windows donde está montado \\Luiscp\d\...
+
+scan_root: "\\\\Luiscp\\d\\Cebrian y Fraile Abogados\\Clientes"
+
+# Metadatos y estado SIEMPRE en disco local (evita locks SMB en SQLite)
+data_dir: "C:/ProgramData/DespachoOps/Index"
+
+index_db_path: ""          # default: {data_dir}/despachoops_index.sqlite
+catalog_output_path: ""    # default: {data_dir}/catalogo_clientes.csv
+log_dir: ""                # default: {data_dir}/logs
+ocr_cache_dir: ""          # default: {data_dir}/ocr_cache
+ocr_queue_path: ""         # default: {data_dir}/ocr_jobs.csv
+worker_lock_path: ""       # default: {data_dir}/.despachoops_index.lock
+
+recursive: true
+max_files_per_index_run: 5000
+max_files_per_ocr_run: 150
+index_skip_large_files_mb: 80
+ocr_skip_large_files_mb: 120
+index_text_enabled: true
+index_text_max_chars: 20000
+index_hash_files: false
+
+ocr_worker_enabled: true
+ocr_max_pages_per_file: 15
+ocr_languages: spa+eng
+
+# Ventana nocturna (incluye cruce de medianoche)
+night_window_start: "23:00"
+night_window_end: "06:00"
+
+# Solo procesar si el usuario lleva X minutos sin input (0 = desactivado)
+require_idle_minutes: 10
+
+exclude_dirs:
+  - .git
+  - .venv
+  - __pycache__
+  - node_modules
+  - 04_DUPLICADOS
+  - 99_BACKUP
+  - BACKUPS
+  - PLANTILLAS
+
+exclude_patterns:
+  - "~$*"
+  - Thumbs.db
+  - .DS_Store
+  - "*.tmp"
+  - desktop.ini
+
+special_roots:
+  - IRPF
+  - AEAT
+  - Modelos AEAT
+  - SEGURIDAD SOCIAL
+  - Notificaciones TGSS
+  - RENTA
+  - MODELOS
+  - PLANTILLAS
+  - BACKUPS
+
+exclude_path_patterns:
+  - "*/node_modules/*"
+  - "*/.git/*"
+  - "*/dist/*"
+  - "*/build/*"
+
+worker:
+  enabled: true
+  interval_seconds: 600
+  stale_lock_minutes: 180

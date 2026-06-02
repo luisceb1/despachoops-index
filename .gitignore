@@ -1,0 +1,12 @@
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+data/
+*.sqlite
+*.sqlite-journal
+ocr_cache/
+logs/
+*.log
+ocr_jobs.csv
+.despachoops_index.lock
