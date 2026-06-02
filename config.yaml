@@ -16,6 +16,9 @@ worker_lock_path: ""       # default: {data_dir}/.despachoops_index.lock
 recursive: true
 max_files_per_index_run: 5000
 max_files_per_ocr_run: 150
+
+# Catálogo CSV recorre TODO el árbol SMB (~192k archivos). Dejar false en ciclo nocturno.
+catalog_each_night_cycle: false
 index_skip_large_files_mb: 80
 ocr_skip_large_files_mb: 120
 index_text_enabled: true
@@ -66,6 +69,23 @@ exclude_path_patterns:
   - "*/.git/*"
   - "*/dist/*"
   - "*/build/*"
+
+# Ollama local: enriquece desde texto ya en SQLite/caché OCR (sin re-leer SMB)
+llm:
+  enabled: true
+  max_files_per_run: 20
+  text_chars_for_prompt: 3500
+  min_text_chars: 80
+  release_model_after_batch: true
+  enrich:
+    model: qwen3:8b
+    base_url: http://localhost:11434
+    timeout_seconds: 120
+    num_ctx: 4096
+    num_predict: 512
+    format: json
+    keep_alive: 5m
+    retries: 1
 
 worker:
   enabled: true

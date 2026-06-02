@@ -13,6 +13,7 @@ from indexops.config import IndexConfig
 from indexops.idle import user_idle_minutes
 from indexops.indexer import build_index
 from indexops.night_window import can_run_now
+from indexops.llm_enrichment import run_llm_enrichment
 from indexops.ocr_worker import run_ocr_worker
 from indexops.safety import assert_read_only_target, verify_scan_root_access
 
@@ -26,6 +27,8 @@ class NightCycleResult:
     index_updated: int = 0
     ocr_processed: int = 0
     ocr_discovered: int = 0
+    llm_processed: int = 0
+    llm_enriched: int = 0
 
 
 def setup_logging(config: IndexConfig) -> None:
@@ -65,9 +68,12 @@ def run_night_cycle(
 
     log.info("Iniciando ciclo nocturno sobre %s", config.scan_root)
 
-    if not skip_catalog:
+    run_catalog = not skip_catalog and config.catalog_each_night_cycle
+    if run_catalog:
         cat = write_catalog(config)
         log.info("Catálogo: %s filas (%s)", cat.total_rows, dict(cat.counts))
+    elif not skip_catalog:
+        log.info("Catálogo omitido (catalog_each_night_cycle=false; evita barrido SMB)")
 
     with _worker_lock(config):
         idx = build_index(config, rebuild=rebuild_index)
@@ -89,6 +95,22 @@ def run_night_cycle(
         else:
             log.info("OCR: procesados=%s descubiertos=%s", ocr.processed, ocr.discovered)
 
+        llm = run_llm_enrichment(config, force=force)
+        if llm.disabled:
+            log.info("LLM desactivado")
+        elif llm.outside_window:
+            log.info("LLM fuera de ventana")
+        elif llm.preflight_failed:
+            log.warning("LLM preflight: %s", llm.preflight_failed)
+        else:
+            log.info(
+                "LLM: proc=%s ok=%s omitidos=%s errores=%s",
+                llm.processed,
+                llm.enriched,
+                llm.skipped,
+                llm.errors,
+            )
+
     return NightCycleResult(
         True,
         "OK",
@@ -97,6 +119,8 @@ def run_night_cycle(
         index_updated=idx.updated,
         ocr_processed=ocr.processed if config.ocr_worker_enabled else 0,
         ocr_discovered=ocr.discovered if config.ocr_worker_enabled else 0,
+        llm_processed=llm.processed if config.llm.enabled else 0,
+        llm_enriched=llm.enriched if config.llm.enabled else 0,
     )
 
 

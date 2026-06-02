@@ -47,6 +47,24 @@ def init_db(conn: sqlite3.Connection) -> bool:
         )
         """
     )
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS llm_enrichment (
+            file_id INTEGER PRIMARY KEY,
+            tipo_documental TEXT,
+            area_sugerida TEXT,
+            resumen TEXT,
+            palabras_clave TEXT,
+            confianza TEXT,
+            necesita_revision INTEGER,
+            modelo TEXT,
+            status TEXT,
+            error_message TEXT,
+            enriched_at TEXT,
+            FOREIGN KEY(file_id) REFERENCES files(id)
+        )
+        """
+    )
     try:
         conn.execute(
             """

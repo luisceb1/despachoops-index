@@ -171,27 +171,35 @@ def search_index(
         rows = conn.execute(
             """
             SELECT f.path, f.name, f.cliente_carpeta, f.area_probable,
-                   COALESCE(t.text_preview, '') AS text_preview
+                   COALESCE(t.text_preview, '') AS text_preview,
+                   COALESCE(l.resumen, '') AS llm_resumen,
+                   COALESCE(l.tipo_documental, '') AS llm_tipo
             FROM files f
             LEFT JOIN file_text t ON t.file_id = f.id
+            LEFT JOIN llm_enrichment l ON l.file_id = f.id AND l.status = 'ok'
             WHERE LOWER(f.path) LIKE ? OR LOWER(f.name) LIKE ?
                OR LOWER(f.cliente_carpeta) LIKE ? OR LOWER(COALESCE(t.text_preview,'')) LIKE ?
+               OR LOWER(COALESCE(l.resumen,'')) LIKE ? OR LOWER(COALESCE(l.tipo_documental,'')) LIKE ?
             ORDER BY f.path
             LIMIT ?
             """,
-            (like, like, like, like, limit * 3),
+            (like, like, like, like, like, like, limit * 3),
         ).fetchall()
         results = []
         for row in rows:
             if client_filter and client_filter.lower() not in str(row["cliente_carpeta"] or "").lower():
                 continue
+            preview = row["text_preview"] or ""
+            if row["llm_resumen"]:
+                preview = f"{row['llm_resumen']} | {preview}".strip(" |")
             results.append(
                 {
                     "ruta": row["path"],
                     "nombre": row["name"],
                     "cliente": row["cliente_carpeta"] or "",
                     "area": row["area_probable"] or "",
-                    "text_preview": row["text_preview"] or "",
+                    "tipo_llm": row["llm_tipo"] or "",
+                    "text_preview": preview,
                 }
             )
             if len(results) >= limit:

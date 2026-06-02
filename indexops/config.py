@@ -6,6 +6,8 @@ from typing import Any
 
 import yaml
 
+from indexops.llm.settings import LlmConfig, parse_llm_config
+
 
 @dataclass(frozen=True)
 class IndexConfig:
@@ -38,6 +40,8 @@ class IndexConfig:
     worker_enabled: bool
     worker_interval_seconds: int
     worker_stale_lock_minutes: int
+    catalog_each_night_cycle: bool
+    llm: LlmConfig
     config_source: Path | None = None
 
 
@@ -85,6 +89,8 @@ def load_config(path: Path | str = "config.yaml") -> IndexConfig:
         worker_enabled=bool(worker.get("enabled", True)),
         worker_interval_seconds=int(worker.get("interval_seconds", 600)),
         worker_stale_lock_minutes=int(worker.get("stale_lock_minutes", 180)),
+        catalog_each_night_cycle=bool(raw.get("catalog_each_night_cycle", False)),
+        llm=parse_llm_config(raw.get("llm")),
         config_source=source,
     )
 

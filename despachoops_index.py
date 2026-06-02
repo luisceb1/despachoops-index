@@ -15,6 +15,8 @@ from indexops.safety import verify_scan_root_access
 from indexops.night_window import can_run_now
 from indexops.idle import user_idle_minutes
 from indexops.ocr import tesseract_available
+from indexops.llm_enrichment import run_llm_enrichment, count_llm_pending
+from indexops.llm.ollama_client import OllamaClient, profile_to_client_config
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -43,7 +45,10 @@ def main(argv: list[str] | None = None) -> int:
     p_ocr = sub.add_parser("ocr-worker", help="Procesa cola OCR nocturna")
     p_ocr.add_argument("--force", action="store_true")
 
-    p_night = sub.add_parser("night-cycle", help="Catálogo + índice + OCR en ventana 23:00–06:00")
+    p_llm = sub.add_parser("llm-enrich", help="Enriquece documentos con Ollama (texto local)")
+    p_llm.add_argument("--force", action="store_true")
+
+    p_night = sub.add_parser("night-cycle", help="Índice + OCR + LLM en ventana 23:00–06:00")
     p_night.add_argument("--skip-catalog", action="store_true")
     p_night.add_argument("--rebuild", action="store_true")
     p_night.add_argument("--force", action="store_true")
@@ -85,6 +90,21 @@ def main(argv: list[str] | None = None) -> int:
             print(f"{row['cliente']}\t{row['nombre']}\t{row['ruta']}")
         print(f"--- {len(rows)} resultados")
         return 0
+    if args.command == "llm-enrich":
+        if not args.force:
+            ok, reason = _guard(config)
+            if not ok:
+                print(reason)
+                return 0
+        result = run_llm_enrichment(config, force=args.force)
+        if result.preflight_failed:
+            print(f"LLM preflight: {result.preflight_failed}", file=sys.stderr)
+            return 1
+        print(
+            f"LLM: proc={result.processed} ok={result.enriched} "
+            f"omitidos={result.skipped} errores={result.errors}"
+        )
+        return 0
     if args.command == "ocr-worker":
         if not getattr(args, "force", False):
             ok, reason = _guard(config)
@@ -105,8 +125,8 @@ def main(argv: list[str] | None = None) -> int:
             print(result.reason)
             return 0 if not args.force else 1
         print(
-            f"Ciclo OK: index={result.index_scanned} OCR proc={result.ocr_processed} "
-            f"disc={result.ocr_discovered}"
+            f"Ciclo OK: index={result.index_scanned} OCR={result.ocr_processed} "
+            f"LLM={result.llm_enriched}/{result.llm_processed}"
         )
         return 0
     if args.command == "worker":
@@ -150,6 +170,13 @@ def cmd_doctor(config) -> int:
     print(f"ahora ejecutaría ciclo: {allowed} ({reason})")
     print(f"Tesseract: {'sí' if tesseract_available() else 'no (OCR limitado)'}")
     print(f"OCR worker: {'activado' if config.ocr_worker_enabled else 'desactivado'}")
+    print(f"Catálogo en ciclo nocturno: {'sí' if config.catalog_each_night_cycle else 'no (recomendado)'}")
+    print(f"LLM: {'activado' if config.llm.enabled else 'desactivado'} ({config.llm.profile.model})")
+    if config.llm.enabled:
+        client = OllamaClient(profile_to_client_config(config.llm.profile))
+        llm_ok, llm_msg = client.preflight()
+        print(f"  Ollama: {'OK' if llm_ok else llm_msg}")
+        print(f"  pendientes enriquecer: {count_llm_pending(config)}")
     return 0 if ok else 1
 
 

@@ -17,6 +17,8 @@ def _config(tmp_path: Path, scan: Path, data: Path) -> Path:
         "exclude_patterns": [],
         "special_roots": [],
         "exclude_path_patterns": [],
+        "llm": {"enabled": False},
+        "catalog_each_night_cycle": False,
     }
     path = tmp_path / "config.yaml"
     path.write_text(yaml.dump(cfg), encoding="utf-8")
