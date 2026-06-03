@@ -6,6 +6,17 @@ Herramienta **separada** de [Autoarchivo](https://github.com/luisceb1/despachoop
 
 No mueve, copia, renombra, borra ni reorganiza carpetas. Sin waves, apply ni rename.
 
+**Rutas de producción (Windows):**
+
+| Qué | Dónde |
+|-----|--------|
+| Código | `C:\DespachoOps\despachoops-index` |
+| SQLite, OCR cache, logs, cola, lock | `C:\DespachoOpsData\Index` (solo disco local) |
+| Dashboards Excel | `\\Luiscp\d\Cebrian y Fraile Abogados\Index\reports` |
+| Documentos (solo lectura) | `\\Luiscp\d\Cebrian y Fraile Abogados\Clientes` |
+
+Nunca escribir en `scan_root`. No guardar SQLite, OCR ni logs en SMB.
+
 ## Instalación
 
 ```bash
@@ -16,13 +27,43 @@ pip install -r requirements.txt
 
 Windows: Tesseract (`spa`) + Poppler para OCR; [Ollama](https://ollama.com) con `qwen3:8b` (o el modelo de `config.yaml`).
 
-```bash
-export PYTHONPATH=src
-python -m despachoops_index.cli init --config config.yaml
-python -m despachoops_index.cli doctor --config config.yaml
+## Producción (PowerShell)
+
+```powershell
+cd C:\DespachoOps\despachoops-index
+.\.venv\Scripts\python.exe -m pip install -e .
+.\.venv\Scripts\python.exe -m despachoops_index.cli --config config.yaml init
+.\.venv\Scripts\python.exe -m despachoops_index.cli --config config.yaml doctor
+.\.venv\Scripts\python.exe -m despachoops_index.cli --config config.yaml index --limit 5000 --text --force
+.\.venv\Scripts\python.exe -m despachoops_index.cli --config config.yaml dashboard
 ```
 
-## CLI — MVP manual
+Índice grande (20.000 archivos) y dashboard:
+
+```powershell
+.\.venv\Scripts\python.exe -m despachoops_index.cli --config config.yaml index --limit 20000 --text --force
+.\.venv\Scripts\python.exe -m despachoops_index.cli --config config.yaml dashboard
+```
+
+Dashboard con nombre explícito en red:
+
+```powershell
+.\.venv\Scripts\python.exe -m despachoops_index.cli --config config.yaml dashboard --output "\\Luiscp\d\Cebrian y Fraile Abogados\Index\reports\index_dashboard_20000.xlsx"
+```
+
+Sin `--output`, el dashboard se guarda como `index_dashboard_YYYYMMDD_HHMMSS.xlsx` en `reports_dir`.
+
+## CLI — desarrollo local
+
+`--config config.yaml` va **antes** del subcomando:
+
+```bash
+export PYTHONPATH=src
+python -m despachoops_index.cli --config config.yaml init
+python -m despachoops_index.cli --config config.yaml doctor
+```
+
+MVP manual (sin config):
 
 ```bash
 python -m despachoops_index.cli index --root "RUTA" --db data/despacho_index.sqlite --limit 1000
@@ -31,15 +72,15 @@ python -m despachoops_index.cli search "consulta" --db data/despacho_index.sqlit
 python -m despachoops_index.cli dashboard --db data/despacho_index.sqlite --output reports/index_dashboard.xlsx
 ```
 
-Con `config.yaml` (producción):
+Con `config.yaml`:
 
-```bash
-python -m despachoops_index.cli index --config config.yaml --text
-python -m despachoops_index.cli search "modelo 303" --config config.yaml
-python -m despachoops_index.cli ocr-worker --config config.yaml
-python -m despachoops_index.cli llm-enrich --config config.yaml
-python -m despachoops_index.cli night-cycle --config config.yaml
-python -m despachoops_index.cli worker --config config.yaml --once
+```powershell
+python -m despachoops_index.cli --config config.yaml index --text
+python -m despachoops_index.cli --config config.yaml search "modelo 303" --limit 20
+python -m despachoops_index.cli --config config.yaml ocr-worker --force
+python -m despachoops_index.cli --config config.yaml llm-enrich --force
+python -m despachoops_index.cli --config config.yaml night-cycle --force
+python -m despachoops_index.cli --config config.yaml worker --once
 ```
 
 ## Ciclo nocturno
@@ -48,7 +89,7 @@ python -m despachoops_index.cli worker --config config.yaml --once
 2. OCR → caché local (`max_files_per_ocr_run`).
 3. Ollama → enriquecimiento desde SQLite/caché (**sin re-leer SMB**).
 
-Ventana **23:00–06:00** + `require_idle_minutes` (Windows). SQLite y cachés en `C:\ProgramData\DespachoOps\Index`.
+Ventana **23:00–06:00** + `require_idle_minutes` (Windows).
 
 `catalog_each_night_cycle: false` evita barrido CSV completo cada noche (~192k archivos en SMB).
 
@@ -57,6 +98,8 @@ Ventana **23:00–06:00** + `require_idle_minutes` (Windows). SQLite y cachés e
 ```powershell
 .\scripts\install_task_scheduler.ps1
 ```
+
+Ejecuta `scripts\run_worker.ps1` → `python -m despachoops_index.cli --config config.yaml worker --once`.
 
 ## Estructura
 

@@ -9,6 +9,7 @@ def _minimal_config(**kwargs) -> AppConfig:
     base = dict(
         scan_root=Path("."),
         data_dir=Path("data"),
+        reports_dir=Path("data/reports"),
         index_db_path=Path("data/db.sqlite"),
         log_dir=Path("data/logs"),
         ocr_cache_dir=Path("data/ocr"),

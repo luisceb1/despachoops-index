@@ -1,5 +1,5 @@
 $TaskName = "DespachoOps-Index-Night"
-$ProjectRoot = "C:\ProyectosCoding\DespachoOps - Index"
+$ProjectRoot = "C:\DespachoOps\despachoops-index"
 $Script = Join-Path $ProjectRoot "scripts\run_worker.ps1"
 $Action = New-ScheduledTaskAction -Execute "powershell.exe" -Argument "-NoProfile -ExecutionPolicy Bypass -File `"$Script`""
 $Trigger = New-ScheduledTaskTrigger -Daily -At "23:00"

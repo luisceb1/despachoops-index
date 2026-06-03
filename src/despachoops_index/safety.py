@@ -8,21 +8,52 @@ class ReadOnlyViolation(RuntimeError):
     pass
 
 
+def _safe_resolve(path: Path) -> Path:
+    try:
+        return path.expanduser().resolve()
+    except OSError:
+        return path.expanduser().absolute()
+
+
+def _is_under(child: Path, parent: Path) -> bool:
+    child_r = _safe_resolve(child)
+    parent_r = _safe_resolve(parent)
+    try:
+        child_r.relative_to(parent_r)
+        return True
+    except ValueError:
+        pass
+    child_s = os.path.normcase(str(child_r))
+    parent_s = os.path.normcase(str(parent_r))
+    if child_s == parent_s:
+        return True
+    sep = "\\" if os.sep == "\\" else os.sep
+    return child_s.startswith(parent_s.rstrip(sep) + sep)
+
+
+def assert_writable_output_path(
+    path: Path,
+    scan_root: Path,
+    allowed_roots: tuple[Path, ...] | list[Path],
+    *,
+    check_scan: bool = True,
+) -> None:
+    resolved = _safe_resolve(path)
+    if check_scan:
+        scan = _safe_resolve(scan_root)
+        if _is_under(resolved, scan):
+            raise ReadOnlyViolation(f"Escritura bloqueada sobre documentos: {resolved}")
+    for root in allowed_roots:
+        if _is_under(resolved, root):
+            return
+    allowed = ", ".join(str(_safe_resolve(r)) for r in allowed_roots)
+    raise ReadOnlyViolation(
+        f"Solo se escribe en rutas permitidas ({allowed}); rechazado: {resolved}"
+    )
+
+
 def assert_writable_data_path(path: Path, scan_root: Path, data_dir: Path) -> None:
-    resolved = path.resolve()
-    scan = scan_root.resolve()
-    data = data_dir.resolve()
-    try:
-        resolved.relative_to(scan)
-        raise ReadOnlyViolation(f"Escritura bloqueada sobre documentos: {resolved}")
-    except ValueError:
-        pass
-    try:
-        resolved.relative_to(data)
-        return
-    except ValueError:
-        pass
-    raise ReadOnlyViolation(f"Solo se escribe en data_dir ({data}); rechazado: {resolved}")
+    assert_writable_output_path(path, scan_root, (data_dir,))
 
 
 def verify_scan_root(scan_root: Path) -> tuple[bool, str]:
@@ -42,8 +73,4 @@ def verify_scan_root(scan_root: Path) -> tuple[bool, str]:
 
 
 def is_under_scan(path: Path, scan_root: Path) -> bool:
-    try:
-        path.resolve().relative_to(scan_root.resolve())
-        return True
-    except (ValueError, OSError):
-        return False
+    return _is_under(path, scan_root)

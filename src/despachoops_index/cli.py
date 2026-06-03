@@ -15,7 +15,7 @@ from despachoops_index.ocr import tesseract_available
 from despachoops_index.ocr_worker import run_ocr_worker
 from despachoops_index.search import search
 from despachoops_index.idle import user_idle_minutes
-from despachoops_index.safety import verify_scan_root
+from despachoops_index.safety import assert_writable_output_path, verify_scan_root
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -46,7 +46,11 @@ def main(argv: list[str] | None = None) -> int:
 
     p_dash = sub.add_parser("dashboard", help="Excel de diagnóstico")
     p_dash.add_argument("--db", default="")
-    p_dash.add_argument("--output", required=True)
+    p_dash.add_argument(
+        "--output",
+        default="",
+        help="Ruta .xlsx (opcional; por defecto reports_dir/index_dashboard_YYYYMMDD_HHMMSS.xlsx)",
+    )
 
     p_ocr = sub.add_parser("ocr-worker", help="Cola OCR nocturna")
     p_ocr.add_argument("--force", action="store_true")
@@ -121,10 +125,7 @@ def main(argv: list[str] | None = None) -> int:
         return 0
 
     if args.command == "dashboard":
-        out = Path(args.output).expanduser().resolve()
-        r = build_dashboard(db_path, out)
-        print(f"Dashboard: {r.output_path}")
-        return 0
+        return _cmd_dashboard(args, config_path, db_path)
 
     return 1
 
@@ -142,9 +143,48 @@ def _cmd_init(config_path: Path, *, force: bool) -> int:
         print(f"No existe {config_path}", file=sys.stderr)
         return 2
     app = load_app_config(config_path)
-    for d in (app.data_dir, app.log_dir, app.ocr_cache_dir):
+    for d in (app.data_dir, app.log_dir, app.ocr_cache_dir, app.reports_dir):
+        assert_writable_output_path(d, app.scan_root, app.writable_output_roots())
         d.mkdir(parents=True, exist_ok=True)
+    assert_writable_output_path(app.index_db_path, app.scan_root, (app.data_dir,))
+    app.index_db_path.parent.mkdir(parents=True, exist_ok=True)
     print(f"data_dir: {app.data_dir}")
+    print(f"reports_dir: {app.reports_dir}")
+    return 0
+
+
+def _cmd_dashboard(args, config_path: Path, db_path: Path) -> int:
+    if not db_path.exists():
+        print(f"No existe DB: {db_path}", file=sys.stderr)
+        return 2
+
+    app = load_app_config(config_path) if config_path.exists() else None
+
+    if args.output:
+        out = Path(args.output).expanduser()
+    elif app is not None:
+        out = app.default_dashboard_path()
+    else:
+        print(
+            "dashboard sin --output requiere --config con reports_dir",
+            file=sys.stderr,
+        )
+        return 2
+
+    if app is not None and not args.db:
+        assert_writable_output_path(out, app.scan_root, app.writable_output_roots())
+    else:
+        data_root = db_path.parent
+        assert_writable_output_path(
+            out, data_root, (data_root,), check_scan=False
+        )
+
+    try:
+        out = out.resolve()
+    except OSError:
+        out = out.absolute()
+    r = build_dashboard(db_path, out)
+    print(f"Dashboard: {r.output_path}")
     return 0
 
 
@@ -154,6 +194,7 @@ def _run_app_command(args, app) -> int:
         ok, msg = verify_scan_root(app.scan_root)
         print(f"  acceso: {'OK' if ok else msg}")
         print(f"data_dir: {app.data_dir}")
+        print(f"reports_dir: {app.reports_dir}")
         print(f"ventana: {app.night_window_start}-{app.night_window_end}")
         idle = user_idle_minutes(app.require_idle_minutes)
         allowed, reason = can_run_now(app, idle_ok=idle)

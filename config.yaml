@@ -1,6 +1,10 @@
 # DespachoOps Index — producción Windows
+# Código: C:\DespachoOps\despachoops-index
+# Datos técnicos (local): C:\DespachoOpsData\Index
+# Reports (red): \\Luiscp\d\Cebrian y Fraile Abogados\Index\reports
 scan_root: "\\\\Luiscp\\d\\Cebrian y Fraile Abogados\\Clientes"
-data_dir: "C:/ProgramData/DespachoOps/Index"
+data_dir: "C:/DespachoOpsData/Index"
+reports_dir: "\\\\Luiscp\\d\\Cebrian y Fraile Abogados\\Index\\reports"
 
 recursive: true
 max_files_per_index_run: 5000
