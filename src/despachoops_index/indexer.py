@@ -42,13 +42,14 @@ def build_index(options: IndexOptions) -> IndexResult:
         scanned = indexed = skipped = unchanged = read_errors = with_text = 0
         limit_reached = False
 
-        for path in iter_scan_paths(root, options.scan_filters):
+        filters = options.to_scan_filters()
+        for path in iter_scan_paths(root, filters, scan_root=root):
             scanned += 1
             if options.limit > 0 and indexed >= options.limit:
                 limit_reached = True
                 break
 
-            ignored, reason = skip_reason(path, options.scan_filters)
+            ignored, reason = skip_reason(path, filters, scan_root=root)
             if ignored:
                 _insert_ignored(conn, path, reason)
                 skipped += 1

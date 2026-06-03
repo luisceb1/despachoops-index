@@ -64,3 +64,26 @@ def test_dashboard_all_sheets(indexed_db):
     assert len(pdf_rows) >= 2
 
     wb.close()
+
+
+def test_sin_texto_sheet_lists_pdf_without_extractable_text(tmp_path: Path):
+    root = tmp_path / "docs"
+    root.mkdir()
+    (root / "vacio.pdf").write_bytes(b"%PDF-1.4\n")
+    (root / "con_texto.txt").write_text("contenido util", encoding="utf-8")
+
+    db = tmp_path / "index.sqlite"
+    build_index(IndexOptions(root=root, db_path=db, include_text=True))
+    out = tmp_path / "reports" / "dash.xlsx"
+    build_dashboard(db, out)
+
+    wb = load_workbook(out, read_only=True)
+    headers = [c.value for c in wb["Sin_Texto"][1]]
+    assert headers == ["path", "extension", "read_error", "size_bytes", "name"]
+
+    rows = list(wb["Sin_Texto"].iter_rows(min_row=2, values_only=True))
+    sin_texto_paths = [r[0] for r in rows if r and r[0]]
+    assert any("vacio.pdf" in str(p) for p in sin_texto_paths)
+    assert not any("con_texto.txt" in str(p) for p in sin_texto_paths)
+
+    wb.close()

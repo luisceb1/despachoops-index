@@ -35,7 +35,12 @@ def build_dashboard(db_path: Path, output_path: Path) -> DashboardResult:
         _write_sheet(wb, "Resumen", ["metrica", "valor"], summary)
         _write_sheet(wb, "Extensiones", ["extension", "archivos"], by_ext)
         _write_sheet(wb, "Rutas_Largas", ["path", "path_length", "name"], long_paths)
-        _write_sheet(wb, "Sin_Texto", ["path", "extension", "read_error"], sin_texto)
+        _write_sheet(
+            wb,
+            "Sin_Texto",
+            ["path", "extension", "read_error", "size_bytes", "name"],
+            sin_texto,
+        )
         _write_sheet(wb, "PDFs", ["path", "size_bytes", "mtime_iso", "read_error"], pdfs)
         _write_sheet(
             wb,
@@ -123,17 +128,41 @@ def _sin_texto(conn: sqlite3.Connection) -> list[dict[str, str]]:
     placeholders = ",".join("?" for _ in DOCUMENT_EXTENSIONS)
     rows = conn.execute(
         f"""
-        SELECT f.path, f.extension, COALESCE(f.read_error, '') AS read_error
+        SELECT f.path, f.extension, COALESCE(f.read_error, '') AS read_error,
+               f.size_bytes, f.name,
+               COALESCE(t.text_preview, '') AS text_preview
         FROM files f
         LEFT JOIN file_text t ON t.file_id = f.id
-        WHERE f.extension IN ({placeholders})
-          AND (t.file_id IS NULL OR COALESCE(t.text_preview, '') = '')
+        WHERE LOWER(f.extension) IN ({placeholders})
+          AND (
+            COALESCE(f.read_error, '') != ''
+            OR t.file_id IS NULL
+            OR TRIM(COALESCE(t.text_preview, '')) = ''
+            OR LOWER(TRIM(t.text_preview)) = 'sin_texto'
+            OR LOWER(TRIM(t.text_preview)) LIKE 'read_error:%'
+          )
         ORDER BY f.path
         LIMIT 5000
         """,
-        tuple(DOCUMENT_EXTENSIONS),
+        tuple(ext.lower() for ext in DOCUMENT_EXTENSIONS),
     ).fetchall()
-    return [{"path": r[0], "extension": r[1], "read_error": r[2]} for r in rows]
+    return [
+        {
+            "path": r[0],
+            "extension": r[1],
+            "read_error": r[2] or _preview_as_error(r[5]),
+            "size_bytes": str(r[3] if r[3] is not None else ""),
+            "name": r[4] or "",
+        }
+        for r in rows
+    ]
+
+
+def _preview_as_error(preview: str) -> str:
+    p = (preview or "").strip().lower()
+    if p in {"sin_texto", "read_error"} or p.startswith("read_error:"):
+        return preview.strip()
+    return ""
 
 
 def _pdfs(conn: sqlite3.Connection) -> list[dict[str, str]]:

@@ -3,10 +3,9 @@ from pathlib import Path
 
 import yaml
 
-from despachoops_index.config import ScanFilters, load_app_config
+from despachoops_index.config import IndexOptions, ScanFilters, load_app_config
 from despachoops_index.indexer import build_index
-from despachoops_index.config import IndexOptions
-from despachoops_index.walk import iter_scan_files, iter_scan_paths
+from despachoops_index.walk import iter_scan_files, iter_scan_paths, skip_reason
 
 
 def test_walk_skips_git_and_temp(tmp_path: Path):
@@ -52,7 +51,7 @@ def test_walk_skips_web_noise(tmp_path: Path):
         ),
         exclude_extensions=(".png",),
     )
-    names = {p.name for p in iter_scan_paths(root, filters)}
+    names = {p.name for p in iter_scan_paths(root, filters, scan_root=root)}
     assert "expediente.pdf" in names
     assert "theme.css" not in names
     assert "logo.gif" not in names
@@ -60,16 +59,46 @@ def test_walk_skips_web_noise(tmp_path: Path):
     assert "icon.png" not in names
 
 
-def test_indexer_uses_scan_filters(tmp_path: Path):
+def test_excludes_nested_descarga_css_images_path(tmp_path: Path):
+    root = tmp_path / "docs"
+    nested = root / "descarga" / "css" / "images"
+    nested.mkdir(parents=True)
+    asset = nested / "ajax-loader.gif"
+    asset.write_bytes(b"GIF89a")
+    (root / "contrato.txt").write_text("hola", encoding="utf-8")
+
+    filters = ScanFilters(
+        exclude_path_patterns=("*/descarga/css/*", "*/css/images/*"),
+        exclude_extensions=(".gif", ".css", ".js"),
+    )
+    skip, reason = skip_reason(asset, filters, scan_root=root)
+    assert skip is True
+    assert reason in {"ruta_ignorada", "extension_ruido"}
+
+    db = tmp_path / "index.sqlite"
+    opts = IndexOptions(
+        root=root,
+        db_path=db,
+        exclude_path_patterns=filters.exclude_path_patterns,
+        exclude_extensions=filters.exclude_extensions,
+    )
+    build_index(opts)
+    conn = sqlite3.connect(db)
+    names = {r[0] for r in conn.execute("SELECT name FROM files").fetchall()}
+    conn.close()
+    assert "contrato.txt" in names
+    assert "ajax-loader.gif" not in names
+
+
+def test_indexer_uses_exclude_extensions(tmp_path: Path):
     root = tmp_path / "docs"
     root.mkdir()
     (root / "contrato.txt").write_text("texto", encoding="utf-8")
     (root / "bundle.js").write_text("// noise", encoding="utf-8")
 
     db = tmp_path / "index.sqlite"
-    filters = ScanFilters()
-    build_index(IndexOptions(root=root, db_path=db, scan_filters=filters))
-    names = {p.name for p in iter_scan_paths(root, filters)}
+    build_index(IndexOptions(root=root, db_path=db))
+    names = {p.name for p in iter_scan_paths(root, IndexOptions(root=root, db_path=db).to_scan_filters(), scan_root=root)}
     assert "contrato.txt" in names
     assert "bundle.js" not in names
 

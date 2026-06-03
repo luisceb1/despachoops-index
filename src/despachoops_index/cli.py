@@ -84,6 +84,10 @@ def main(argv: list[str] | None = None) -> int:
                     include_text=opts.include_text, incremental=False,
                     use_ocr_cache=opts.use_ocr_cache, ocr_cache_dir=opts.ocr_cache_dir,
                     skip_large_files_mb=opts.skip_large_files_mb,
+                    exclude_dirs=opts.exclude_dirs,
+                    exclude_patterns=opts.exclude_patterns,
+                    exclude_path_patterns=opts.exclude_path_patterns,
+                    exclude_extensions=opts.exclude_extensions,
                 )
         elif args.root and args.db:
             opts = resolve_paths(args.root, args.db)

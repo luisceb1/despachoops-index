@@ -86,7 +86,18 @@ class IndexOptions:
     use_ocr_cache: bool = False
     ocr_cache_dir: Path | None = None
     skip_large_files_mb: int = 0
-    scan_filters: ScanFilters = ScanFilters()
+    exclude_dirs: tuple[str, ...] = ()
+    exclude_patterns: tuple[str, ...] = ()
+    exclude_path_patterns: tuple[str, ...] = ()
+    exclude_extensions: tuple[str, ...] = ()
+
+    def to_scan_filters(self) -> ScanFilters:
+        return ScanFilters(
+            exclude_dirs=self.exclude_dirs,
+            exclude_patterns=self.exclude_patterns,
+            exclude_path_patterns=self.exclude_path_patterns,
+            exclude_extensions=self.exclude_extensions,
+        )
 
 
 @dataclass(frozen=True)
@@ -154,12 +165,18 @@ class AppConfig:
             use_ocr_cache=True,
             ocr_cache_dir=self.ocr_cache_dir,
             skip_large_files_mb=self.index_skip_large_files_mb,
-            scan_filters=ScanFilters(
-                exclude_dirs=self.exclude_dirs,
-                exclude_patterns=self.exclude_patterns,
-                exclude_path_patterns=self.exclude_path_patterns,
-                exclude_extensions=self.exclude_extensions,
-            ),
+            exclude_dirs=self.exclude_dirs,
+            exclude_patterns=self.exclude_patterns,
+            exclude_path_patterns=self.exclude_path_patterns,
+            exclude_extensions=self.exclude_extensions,
+        )
+
+    def to_scan_filters(self) -> ScanFilters:
+        return ScanFilters(
+            exclude_dirs=self.exclude_dirs,
+            exclude_patterns=self.exclude_patterns,
+            exclude_path_patterns=self.exclude_path_patterns,
+            exclude_extensions=self.exclude_extensions,
         )
 
 
