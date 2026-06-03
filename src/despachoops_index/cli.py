@@ -143,13 +143,17 @@ def _cmd_init(config_path: Path, *, force: bool) -> int:
         print(f"No existe {config_path}", file=sys.stderr)
         return 2
     app = load_app_config(config_path)
-    for d in (app.data_dir, app.log_dir, app.ocr_cache_dir, app.reports_dir):
+    for d in (app.data_dir, app.log_dir, app.ocr_cache_dir):
+        assert_writable_output_path(d, app.scan_root, (app.data_dir,))
+        d.mkdir(parents=True, exist_ok=True)
+    for d in (app.shared_reports_dir, app.shared_latest_dir):
         assert_writable_output_path(d, app.scan_root, app.writable_output_roots())
         d.mkdir(parents=True, exist_ok=True)
     assert_writable_output_path(app.index_db_path, app.scan_root, (app.data_dir,))
     app.index_db_path.parent.mkdir(parents=True, exist_ok=True)
     print(f"data_dir: {app.data_dir}")
-    print(f"reports_dir: {app.reports_dir}")
+    print(f"shared_reports_dir: {app.shared_reports_dir}")
+    print(f"shared_latest_dir: {app.shared_latest_dir}")
     return 0
 
 
@@ -194,7 +198,8 @@ def _run_app_command(args, app) -> int:
         ok, msg = verify_scan_root(app.scan_root)
         print(f"  acceso: {'OK' if ok else msg}")
         print(f"data_dir: {app.data_dir}")
-        print(f"reports_dir: {app.reports_dir}")
+        print(f"shared_reports_dir: {app.shared_reports_dir}")
+        print(f"shared_latest_dir: {app.shared_latest_dir}")
         print(f"ventana: {app.night_window_start}-{app.night_window_end}")
         idle = user_idle_minutes(app.require_idle_minutes)
         allowed, reason = can_run_now(app, idle_ok=idle)

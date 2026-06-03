@@ -128,7 +128,9 @@ class LlmConfig:
 class AppConfig:
     scan_root: Path
     data_dir: Path
-    reports_dir: Path
+    shared_output_dir: Path | None
+    shared_reports_dir: Path
+    shared_latest_dir: Path
     index_db_path: Path
     log_dir: Path
     ocr_cache_dir: Path
@@ -181,12 +183,17 @@ class AppConfig:
             exclude_extensions=self.exclude_extensions,
         )
 
+    @property
+    def reports_dir(self) -> Path:
+        """Alias de shared_reports_dir (compatibilidad)."""
+        return self.shared_reports_dir
+
     def writable_output_roots(self) -> tuple[Path, ...]:
-        return (self.data_dir, self.reports_dir)
+        return (self.data_dir, self.shared_reports_dir, self.shared_latest_dir)
 
     def default_dashboard_path(self, *, now: datetime | None = None) -> Path:
         stamp = (now or datetime.now()).strftime("%Y%m%d_%H%M%S")
-        return self.reports_dir / f"index_dashboard_{stamp}.xlsx"
+        return self.shared_reports_dir / f"index_dashboard_{stamp}.xlsx"
 
 
 def resolve_paths(root: str | Path, db: str | Path) -> IndexOptions:
@@ -200,16 +207,34 @@ def load_app_config(path: Path | str = "config.yaml") -> AppConfig:
     source = Path(path).resolve()
     raw = yaml.safe_load(source.read_text(encoding="utf-8")) or {}
     data_dir = Path(str(raw.get("data_dir") or "data")).expanduser()
-    reports_dir = (
-        Path(str(raw["reports_dir"])).expanduser()
-        if raw.get("reports_dir")
-        else data_dir / "reports"
+    shared_output_dir = (
+        Path(str(raw["shared_output_dir"])).expanduser()
+        if raw.get("shared_output_dir")
+        else None
     )
+    if raw.get("shared_reports_dir"):
+        shared_reports_dir = Path(str(raw["shared_reports_dir"])).expanduser()
+    elif raw.get("reports_dir"):
+        shared_reports_dir = Path(str(raw["reports_dir"])).expanduser()
+    elif shared_output_dir is not None:
+        shared_reports_dir = shared_output_dir / "reports"
+    else:
+        shared_reports_dir = data_dir / "reports"
+
+    if raw.get("shared_latest_dir"):
+        shared_latest_dir = Path(str(raw["shared_latest_dir"])).expanduser()
+    elif shared_output_dir is not None:
+        shared_latest_dir = shared_output_dir / "latest"
+    else:
+        shared_latest_dir = shared_reports_dir.parent / "latest"
+
     worker = raw.get("worker") or {}
     return AppConfig(
         scan_root=Path(str(raw.get("scan_root") or ".")).expanduser(),
         data_dir=data_dir,
-        reports_dir=reports_dir,
+        shared_output_dir=shared_output_dir,
+        shared_reports_dir=shared_reports_dir,
+        shared_latest_dir=shared_latest_dir,
         index_db_path=Path(str(raw["index_db_path"])) if raw.get("index_db_path") else data_dir / "despacho_index.sqlite",
         log_dir=Path(str(raw["log_dir"])) if raw.get("log_dir") else data_dir / "logs",
         ocr_cache_dir=Path(str(raw["ocr_cache_dir"])) if raw.get("ocr_cache_dir") else data_dir / "ocr_cache",

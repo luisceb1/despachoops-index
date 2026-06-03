@@ -12,7 +12,8 @@ No mueve, copia, renombra, borra ni reorganiza carpetas. Sin waves, apply ni ren
 |-----|--------|
 | Código | `C:\DespachoOps\despachoops-index` |
 | SQLite, OCR cache, logs, cola, lock | `C:\DespachoOpsData\Index` (solo disco local) |
-| Dashboards Excel | `\\Luiscp\d\Cebrian y Fraile Abogados\Index\reports` |
+| Dashboards históricos | `\\Luiscp\d\Cebrian y Fraile Abogados\Index\reports` |
+| Dashboard “último” | `\\Luiscp\d\Cebrian y Fraile Abogados\Index\latest` |
 | Documentos (solo lectura) | `\\Luiscp\d\Cebrian y Fraile Abogados\Clientes` |
 
 Nunca escribir en `scan_root`. No guardar SQLite, OCR ni logs en SMB.
@@ -45,13 +46,16 @@ cd C:\DespachoOps\despachoops-index
 .\.venv\Scripts\python.exe -m despachoops_index.cli --config config.yaml dashboard
 ```
 
-Dashboard con nombre explícito en red:
+Dashboard con nombre explícito en red (reports o latest):
 
 ```powershell
 .\.venv\Scripts\python.exe -m despachoops_index.cli --config config.yaml dashboard --output "\\Luiscp\d\Cebrian y Fraile Abogados\Index\reports\index_dashboard_20000.xlsx"
+.\.venv\Scripts\python.exe -m despachoops_index.cli --config config.yaml dashboard --output "\\Luiscp\d\Cebrian y Fraile Abogados\Index\latest\index_dashboard.xlsx"
 ```
 
-Sin `--output`, el dashboard se guarda como `index_dashboard_YYYYMMDD_HHMMSS.xlsx` en `reports_dir`.
+Sin `--output`, el dashboard se guarda como `index_dashboard_YYYYMMDD_HHMMSS.xlsx` en `shared_reports_dir`.
+
+En `config.yaml`: `shared_output_dir`, `shared_reports_dir` y `shared_latest_dir` definen las carpetas SMB permitidas para escritura (además de `data_dir` local).
 
 ## CLI — desarrollo local
 

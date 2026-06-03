@@ -9,14 +9,21 @@ from despachoops_index.config import IndexOptions, load_app_config
 from despachoops_index.indexer import build_index
 
 
-def _write_cfg(tmp_path: Path, *, reports: Path | None = None) -> Path:
+def _write_cfg(
+    tmp_path: Path,
+    *,
+    reports: Path | None = None,
+    latest: Path | None = None,
+) -> Path:
     data = tmp_path / "data"
     payload = {
         "scan_root": str(tmp_path / "Clientes"),
         "data_dir": str(data),
     }
     if reports is not None:
-        payload["reports_dir"] = str(reports)
+        payload["shared_reports_dir"] = str(reports)
+    if latest is not None:
+        payload["shared_latest_dir"] = str(latest)
     cfg_path = tmp_path / "config.yaml"
     cfg_path.write_text(yaml.dump(payload), encoding="utf-8")
     return cfg_path
@@ -48,6 +55,24 @@ def test_dashboard_without_output_creates_timestamped_xlsx(tmp_path: Path, monke
     wb = load_workbook(expected, read_only=True)
     assert "Resumen" in wb.sheetnames
     wb.close()
+
+
+def test_dashboard_with_explicit_output_in_latest(tmp_path: Path):
+    index = tmp_path / "Index"
+    cfg_path = _write_cfg(
+        tmp_path,
+        reports=index / "reports",
+        latest=index / "latest",
+    )
+    app = load_app_config(cfg_path)
+    scan = tmp_path / "Clientes"
+    scan.mkdir()
+    db = app.index_db_path
+    _seed_db(scan, db)
+
+    explicit = index / "latest" / "index_dashboard.xlsx"
+    assert main(["--config", str(cfg_path), "dashboard", "--output", str(explicit)]) == 0
+    assert explicit.exists()
 
 
 def test_dashboard_with_explicit_output(tmp_path: Path):
