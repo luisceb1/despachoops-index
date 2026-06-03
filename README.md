@@ -78,3 +78,18 @@ pytest
 ```
 
 También funciona con `PYTHONPATH=src pytest` si no instalas el paquete en editable.
+
+## gstack + Cursor (opcional)
+
+[gstack](https://github.com/garrytan/gstack) aporta skills de revisión, depuración, documentación y release para el agente en Cursor. Tiene sentido en este repo para `/review`, `/investigate`, `/ship` y `/document-release`; las skills de diseño web o QA en navegador casi no aplican (CLI sin UI).
+
+Instalación global (una vez):
+
+```bash
+git clone --single-branch --depth 1 https://github.com/garrytan/gstack.git ~/.claude/skills/gstack
+cd ~/.claude/skills/gstack && ./setup -q && bun run gen:skill-docs --host cursor
+```
+
+Enlaza las skills generadas a `~/.cursor/skills/` (el script `setup` aún no incluye `--host cursor`; ver `AGENTS.md`).
+
+Convenciones del proyecto para el agente: [AGENTS.md](AGENTS.md).
