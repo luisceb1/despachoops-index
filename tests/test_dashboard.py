@@ -1,3 +1,4 @@
+import os
 from pathlib import Path
 
 import pytest
@@ -17,6 +18,29 @@ EXPECTED_SHEETS = (
     "Archivos_Temporales_Ignorados",
 )
 
+# Límite práctico en Windows (MAX_PATH ~260) para crear archivos en pytest tmp_path
+_WIN_PATH_BUDGET = 249
+
+
+def _write_long_path_txt(root: Path) -> Path:
+    """Archivo con ruta resuelta >= LONG_PATH_THRESHOLD; evita nombres de 200+ chars en Windows."""
+    base = root / "expediente"
+    base.mkdir(parents=True, exist_ok=True)
+    current = base
+    file_name = "largo.txt"
+    segment = "subdir_"  # 6 chars + slash por nivel
+
+    while len(str((current / file_name).resolve())) < LONG_PATH_THRESHOLD:
+        nxt = current / segment
+        if len(str((nxt / file_name).resolve())) > _WIN_PATH_BUDGET and os.name == "nt":
+            break
+        nxt.mkdir(parents=True, exist_ok=True)
+        current = nxt
+
+    target = current / file_name
+    target.write_text("x", encoding="utf-8")
+    return target
+
 
 @pytest.fixture
 def indexed_db(tmp_path: Path) -> tuple[Path, Path]:
@@ -27,9 +51,7 @@ def indexed_db(tmp_path: Path) -> tuple[Path, Path]:
     dup_dir = root / "cliente"
     dup_dir.mkdir()
     (dup_dir / "mismo.pdf").write_bytes(payload)
-    long_dir = root / "expediente"
-    long_dir.mkdir()
-    (long_dir / ("a" * 200 + ".txt")).write_text("x", encoding="utf-8")
+    _write_long_path_txt(root)
     (root / "~$lock.doc").write_bytes(b"1")
     (root / "contrato.txt").write_text("texto", encoding="utf-8")
 
