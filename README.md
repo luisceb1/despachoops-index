@@ -6,29 +6,22 @@ Herramienta **separada** de [Autoarchivo](https://github.com/luisceb1/despachoop
 
 No mueve, copia, renombra, borra ni reorganiza carpetas. Sin waves, apply ni rename.
 
-**Rutas de producción (Windows):**
+## Producción (Windows)
 
-| Qué | Dónde |
-|-----|--------|
+| Qué | Ruta |
+|-----|------|
 | Código | `C:\DespachoOps\despachoops-index` |
-| SQLite, OCR cache, logs, cola, lock | `C:\DespachoOpsData\Index` (solo disco local) |
-| Dashboards históricos | `\\Luiscp\d\Cebrian y Fraile Abogados\Index\reports` |
-| Dashboard “último” | `\\Luiscp\d\Cebrian y Fraile Abogados\Index\latest` |
-| Documentos (solo lectura) | `\\Luiscp\d\Cebrian y Fraile Abogados\Clientes` |
+| Motor local (SQLite, OCR, logs, lock) | `C:\DespachoOpsData\Index` |
+| Resultados compartidos (raíz) | `\\Luiscp\d\Cebrian y Fraile Abogados\Index` |
+| Reports históricos | `\\Luiscp\d\Cebrian y Fraile Abogados\Index\reports` |
+| Dashboard actual | `\\Luiscp\d\Cebrian y Fraile Abogados\Index\latest\index_dashboard.xlsx` |
+| Documentos (**solo lectura**) | `\\Luiscp\d\Cebrian y Fraile Abogados\Clientes` |
 
-Nunca escribir en `scan_root`. No guardar SQLite, OCR ni logs en SMB.
+**Importante:** solo un PC debe ejecutar el worker nocturno. El resto consulta los Excel en `Index\reports` y `Index\latest`.
 
-## Instalación
+Nunca escribir bajo `Clientes`. No guardar SQLite, OCR ni logs en SMB.
 
-```bash
-python -m venv .venv
-source .venv/bin/activate
-pip install -r requirements.txt
-```
-
-Windows: Tesseract (`spa`) + Poppler para OCR; [Ollama](https://ollama.com) con `qwen3:8b` (o el modelo de `config.yaml`).
-
-## Producción (PowerShell)
+### Instalación y primer arranque
 
 ```powershell
 cd C:\DespachoOps\despachoops-index
@@ -39,104 +32,103 @@ cd C:\DespachoOps\despachoops-index
 .\.venv\Scripts\python.exe -m despachoops_index.cli --config config.yaml dashboard
 ```
 
-Índice grande (20.000 archivos) y dashboard:
+Índice grande (20.000):
 
 ```powershell
 .\.venv\Scripts\python.exe -m despachoops_index.cli --config config.yaml index --limit 20000 --text --force
-.\.venv\Scripts\python.exe -m despachoops_index.cli --config config.yaml dashboard
+.\.venv\Scripts\python.exe -m despachoops_index.cli --config config.yaml dashboard --publish-latest
 ```
 
-Dashboard con nombre explícito en red (reports o latest):
+Dashboard con ruta explícita y publicación en latest:
 
 ```powershell
-.\.venv\Scripts\python.exe -m despachoops_index.cli --config config.yaml dashboard --output "\\Luiscp\d\Cebrian y Fraile Abogados\Index\reports\index_dashboard_20000.xlsx"
-.\.venv\Scripts\python.exe -m despachoops_index.cli --config config.yaml dashboard --output "\\Luiscp\d\Cebrian y Fraile Abogados\Index\latest\index_dashboard.xlsx"
+.\.venv\Scripts\python.exe -m despachoops_index.cli --config config.yaml dashboard --output "\\Luiscp\d\Cebrian y Fraile Abogados\Index\reports\index_dashboard_20000.xlsx" --publish-latest
 ```
 
-Sin `--output`, el dashboard se guarda como `index_dashboard_YYYYMMDD_HHMMSS.xlsx` en `shared_reports_dir`.
+Sin `--output`, guarda `index_dashboard_YYYYMMDD_HHMMSS.xlsx` en `reports_dir`. Con `--publish-latest`, copia también a `latest_dir\index_dashboard.xlsx`.
 
-En `config.yaml`: `shared_output_dir`, `shared_reports_dir` y `shared_latest_dir` definen las carpetas SMB permitidas para escritura (además de `data_dir` local).
+### Worker nocturno (`scripts\run_worker.ps1`)
 
-## CLI — desarrollo local
-
-`--config config.yaml` va **antes** del subcomando:
-
-```bash
-export PYTHONPATH=src
-python -m despachoops_index.cli --config config.yaml init
-python -m despachoops_index.cli --config config.yaml doctor
-```
-
-MVP manual (sin config):
-
-```bash
-python -m despachoops_index.cli index --root "RUTA" --db data/despacho_index.sqlite --limit 1000
-python -m despachoops_index.cli index --root "RUTA" --db data/despacho_index.sqlite --limit 1000 --text
-python -m despachoops_index.cli search "consulta" --db data/despacho_index.sqlite --limit 20
-python -m despachoops_index.cli dashboard --db data/despacho_index.sqlite --output reports/index_dashboard.xlsx
-```
-
-Con `config.yaml`:
+1. Crea `C:\DespachoOpsData\Index\logs`, `Index\reports` e `Index\latest` si faltan.
+2. `init` + `worker --once`.
+3. `dashboard --publish-latest` (histórico con timestamp + latest fijo).
+4. Log en `C:\DespachoOpsData\Index\logs\run_worker_YYYYMMDD_HHMMSS.log`.
+5. Exit code distinto de 0 si falla worker o dashboard.
 
 ```powershell
-python -m despachoops_index.cli --config config.yaml index --text
-python -m despachoops_index.cli --config config.yaml search "modelo 303" --limit 20
-python -m despachoops_index.cli --config config.yaml ocr-worker --force
-python -m despachoops_index.cli --config config.yaml llm-enrich --force
-python -m despachoops_index.cli --config config.yaml night-cycle --force
-python -m despachoops_index.cli --config config.yaml worker --once
+.\scripts\run_worker.ps1
 ```
 
-## Ciclo nocturno
-
-1. Índice incremental (lote `max_files_per_index_run`, solo cambios por `mtime`).
-2. OCR → caché local (`max_files_per_ocr_run`).
-3. Ollama → enriquecimiento desde SQLite/caché (**sin re-leer SMB**).
-
-Ventana **23:00–06:00** + `require_idle_minutes` (Windows).
-
-`catalog_each_night_cycle: false` evita barrido CSV completo cada noche (~192k archivos en SMB).
-
-## Task Scheduler
+### Task Scheduler
 
 ```powershell
 .\scripts\install_task_scheduler.ps1
 ```
 
-Ejecuta `scripts\run_worker.ps1` → `python -m despachoops_index.cli --config config.yaml worker --once`.
+Tarea `DespachoOps-Index-Night`: 23:00, cada 10 min durante 8 h, ejecuta `run_worker.ps1`.
+
+## CLI
+
+`--config config.yaml` va **antes** del subcomando.
+
+Correcto:
+
+```powershell
+python -m despachoops_index.cli --config config.yaml doctor
+```
+
+Incorrecto:
+
+```powershell
+python -m despachoops_index.cli doctor --config config.yaml
+```
+
+## config.yaml (campos de rutas)
+
+```yaml
+scan_root: '\\Luiscp\d\Cebrian y Fraile Abogados\Clientes'
+data_dir: 'C:/DespachoOpsData/Index'
+shared_output_dir: '\\Luiscp\d\Cebrian y Fraile Abogados\Index'
+reports_dir: '\\Luiscp\d\Cebrian y Fraile Abogados\Index\reports'
+latest_dir: '\\Luiscp\d\Cebrian y Fraile Abogados\Index\latest'
+```
+
+## Desarrollo local
+
+```bash
+python -m venv .venv
+source .venv/bin/activate
+pip install -e ".[dev]"
+pytest
+```
+
+MVP sin config:
+
+```bash
+python -m despachoops_index.cli index --root "RUTA" --db data/despacho_index.sqlite --text
+python -m despachoops_index.cli dashboard --db data/despacho_index.sqlite --output reports/dash.xlsx
+```
+
+## Ciclo nocturno
+
+1. Índice incremental (`max_files_per_index_run`).
+2. OCR → caché local.
+3. Ollama → enriquecimiento desde SQLite/caché (sin re-leer SMB).
+
+Ventana **23:00–06:00** + `require_idle_minutes`.
 
 ## Estructura
 
 ```
 src/despachoops_index/
   cli.py, config.py, indexer.py, search.py, dashboard.py
-  ocr.py, ocr_worker.py, llm/, llm_enrichment.py
-  night_runner.py, night_window.py, walk.py, safety.py, idle.py
+  ocr.py, ocr_worker.py, llm/, night_runner.py, safety.py, walk.py
 config.yaml
-scripts/
+scripts/run_worker.ps1
+scripts/install_task_scheduler.ps1
 tests/
 ```
 
-## Tests
-
-```bash
-pip install -e ".[dev]"
-pytest
-```
-
-También funciona con `PYTHONPATH=src pytest` si no instalas el paquete en editable.
-
 ## gstack + Cursor (opcional)
 
-[gstack](https://github.com/garrytan/gstack) aporta skills de revisión, depuración, documentación y release para el agente en Cursor. Tiene sentido en este repo para `/review`, `/investigate`, `/ship` y `/document-release`; las skills de diseño web o QA en navegador casi no aplican (CLI sin UI).
-
-Instalación global (una vez):
-
-```bash
-git clone --single-branch --depth 1 https://github.com/garrytan/gstack.git ~/.claude/skills/gstack
-cd ~/.claude/skills/gstack && ./setup -q && bun run gen:skill-docs --host cursor
-```
-
-Enlaza las skills generadas a `~/.cursor/skills/` (el script `setup` aún no incluye `--host cursor`; ver `AGENTS.md`).
-
-Convenciones del proyecto para el agente: [AGENTS.md](AGENTS.md).
+Ver [AGENTS.md](AGENTS.md).

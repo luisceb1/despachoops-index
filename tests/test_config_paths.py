@@ -7,7 +7,7 @@ from despachoops_index.cli import main
 from despachoops_index.config import load_app_config
 
 
-def test_load_shared_dirs_from_yaml(tmp_path: Path):
+def test_config_parses_latest_dir(tmp_path: Path):
     index = tmp_path / "Index"
     cfg_path = tmp_path / "config.yaml"
     cfg_path.write_text(
@@ -16,17 +16,16 @@ def test_load_shared_dirs_from_yaml(tmp_path: Path):
                 "scan_root": str(tmp_path / "Clientes"),
                 "data_dir": str(tmp_path / "data"),
                 "shared_output_dir": str(index),
-                "shared_reports_dir": str(index / "reports"),
-                "shared_latest_dir": str(index / "latest"),
+                "reports_dir": str(index / "reports"),
+                "latest_dir": str(index / "latest"),
             }
         ),
         encoding="utf-8",
     )
     app = load_app_config(cfg_path)
-    assert app.shared_output_dir == index
-    assert app.shared_reports_dir == index / "reports"
-    assert app.shared_latest_dir == index / "latest"
-    assert app.reports_dir == app.shared_reports_dir
+    assert app.reports_dir == index / "reports"
+    assert app.latest_dir == index / "latest"
+    assert app.latest_dashboard_path() == index / "latest" / "index_dashboard.xlsx"
 
 
 def test_shared_dirs_derived_from_shared_output_dir(tmp_path: Path):
@@ -43,28 +42,11 @@ def test_shared_dirs_derived_from_shared_output_dir(tmp_path: Path):
         encoding="utf-8",
     )
     app = load_app_config(cfg_path)
-    assert app.shared_reports_dir == index / "reports"
-    assert app.shared_latest_dir == index / "latest"
+    assert app.reports_dir == index / "reports"
+    assert app.latest_dir == index / "latest"
 
 
-def test_legacy_reports_dir_maps_to_shared_reports(tmp_path: Path):
-    reports = tmp_path / "reports_share"
-    cfg_path = tmp_path / "config.yaml"
-    cfg_path.write_text(
-        yaml.dump(
-            {
-                "scan_root": str(tmp_path / "Clientes"),
-                "data_dir": str(tmp_path / "data"),
-                "reports_dir": str(reports),
-            }
-        ),
-        encoding="utf-8",
-    )
-    app = load_app_config(cfg_path)
-    assert app.shared_reports_dir == reports
-
-
-def test_default_shared_dirs_when_omitted(tmp_path: Path):
+def test_default_reports_and_latest_when_omitted(tmp_path: Path):
     data = tmp_path / "data"
     cfg_path = tmp_path / "config.yaml"
     cfg_path.write_text(
@@ -72,8 +54,8 @@ def test_default_shared_dirs_when_omitted(tmp_path: Path):
         encoding="utf-8",
     )
     app = load_app_config(cfg_path)
-    assert app.shared_reports_dir == data / "reports"
-    assert app.shared_latest_dir == data / "latest"
+    assert app.reports_dir == data / "reports"
+    assert app.latest_dir == data / "latest"
 
 
 def test_default_dashboard_path_uses_timestamp(tmp_path: Path):
@@ -91,13 +73,13 @@ def _write_cfg(tmp_path: Path, *, reports: Path | None = None) -> Path:
         "data_dir": str(data),
     }
     if reports is not None:
-        payload["shared_reports_dir"] = str(reports)
+        payload["reports_dir"] = str(reports)
     cfg_path = tmp_path / "config.yaml"
     cfg_path.write_text(yaml.dump(payload), encoding="utf-8")
     return cfg_path
 
 
-def test_init_creates_shared_output_dirs(tmp_path: Path):
+def test_init_creates_reports_and_latest_dirs(tmp_path: Path):
     index = tmp_path / "Index"
     cfg_path = tmp_path / "config.yaml"
     cfg_path.write_text(
@@ -105,8 +87,8 @@ def test_init_creates_shared_output_dirs(tmp_path: Path):
             {
                 "scan_root": str(tmp_path / "Clientes"),
                 "data_dir": str(tmp_path / "data"),
-                "shared_reports_dir": str(index / "reports"),
-                "shared_latest_dir": str(index / "latest"),
+                "reports_dir": str(index / "reports"),
+                "latest_dir": str(index / "latest"),
             }
         ),
         encoding="utf-8",

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import shutil
 import sys
 from pathlib import Path
 
@@ -50,6 +51,11 @@ def main(argv: list[str] | None = None) -> int:
         "--output",
         default="",
         help="Ruta .xlsx (opcional; por defecto reports_dir/index_dashboard_YYYYMMDD_HHMMSS.xlsx)",
+    )
+    p_dash.add_argument(
+        "--publish-latest",
+        action="store_true",
+        help="Copia el dashboard generado a latest_dir/index_dashboard.xlsx",
     )
 
     p_ocr = sub.add_parser("ocr-worker", help="Cola OCR nocturna")
@@ -146,14 +152,14 @@ def _cmd_init(config_path: Path, *, force: bool) -> int:
     for d in (app.data_dir, app.log_dir, app.ocr_cache_dir):
         assert_writable_output_path(d, app.scan_root, (app.data_dir,))
         d.mkdir(parents=True, exist_ok=True)
-    for d in (app.shared_reports_dir, app.shared_latest_dir):
+    for d in (app.reports_dir, app.latest_dir):
         assert_writable_output_path(d, app.scan_root, app.writable_output_roots())
         d.mkdir(parents=True, exist_ok=True)
     assert_writable_output_path(app.index_db_path, app.scan_root, (app.data_dir,))
     app.index_db_path.parent.mkdir(parents=True, exist_ok=True)
     print(f"data_dir: {app.data_dir}")
-    print(f"shared_reports_dir: {app.shared_reports_dir}")
-    print(f"shared_latest_dir: {app.shared_latest_dir}")
+    print(f"reports_dir: {app.reports_dir}")
+    print(f"latest_dir: {app.latest_dir}")
     return 0
 
 
@@ -189,7 +195,23 @@ def _cmd_dashboard(args, config_path: Path, db_path: Path) -> int:
         out = out.absolute()
     r = build_dashboard(db_path, out)
     print(f"Dashboard: {r.output_path}")
+
+    if getattr(args, "publish_latest", False):
+        if app is None:
+            print("--publish-latest requiere --config", file=sys.stderr)
+            return 2
+        latest = _publish_dashboard_latest(app, r.output_path)
+        print(f"Dashboard latest: {latest}")
+
     return 0
+
+
+def _publish_dashboard_latest(app, source: Path) -> Path:
+    dest = app.latest_dashboard_path()
+    assert_writable_output_path(dest, app.scan_root, app.writable_output_roots())
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copy2(source, dest)
+    return dest
 
 
 def _run_app_command(args, app) -> int:
@@ -198,8 +220,8 @@ def _run_app_command(args, app) -> int:
         ok, msg = verify_scan_root(app.scan_root)
         print(f"  acceso: {'OK' if ok else msg}")
         print(f"data_dir: {app.data_dir}")
-        print(f"shared_reports_dir: {app.shared_reports_dir}")
-        print(f"shared_latest_dir: {app.shared_latest_dir}")
+        print(f"reports_dir: {app.reports_dir}")
+        print(f"latest_dir: {app.latest_dir}")
         print(f"ventana: {app.night_window_start}-{app.night_window_end}")
         idle = user_idle_minutes(app.require_idle_minutes)
         allowed, reason = can_run_now(app, idle_ok=idle)

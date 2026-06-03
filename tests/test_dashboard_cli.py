@@ -21,9 +21,9 @@ def _write_cfg(
         "data_dir": str(data),
     }
     if reports is not None:
-        payload["shared_reports_dir"] = str(reports)
+        payload["reports_dir"] = str(reports)
     if latest is not None:
-        payload["shared_latest_dir"] = str(latest)
+        payload["latest_dir"] = str(latest)
     cfg_path = tmp_path / "config.yaml"
     cfg_path.write_text(yaml.dump(payload), encoding="utf-8")
     return cfg_path
@@ -36,7 +36,7 @@ def _seed_db(root: Path, db: Path) -> None:
 
 
 def test_dashboard_without_output_creates_timestamped_xlsx(tmp_path: Path, monkeypatch):
-    cfg_path = _write_cfg(tmp_path, reports=tmp_path / "reports")
+    cfg_path = _write_cfg(tmp_path, reports=tmp_path / "reports", latest=tmp_path / "latest")
     app = load_app_config(cfg_path)
     scan = tmp_path / "Clientes"
     scan.mkdir()
@@ -57,6 +57,37 @@ def test_dashboard_without_output_creates_timestamped_xlsx(tmp_path: Path, monke
     wb.close()
 
 
+def test_dashboard_publish_latest(tmp_path: Path):
+    index = tmp_path / "Index"
+    cfg_path = _write_cfg(
+        tmp_path,
+        reports=index / "reports",
+        latest=index / "latest",
+    )
+    app = load_app_config(cfg_path)
+    scan = tmp_path / "Clientes"
+    scan.mkdir()
+    db = app.index_db_path
+    _seed_db(scan, db)
+
+    reports_out = index / "reports" / "index_dashboard_20000.xlsx"
+    latest_out = index / "latest" / "index_dashboard.xlsx"
+
+    assert main(
+        [
+            "--config",
+            str(cfg_path),
+            "dashboard",
+            "--output",
+            str(reports_out),
+            "--publish-latest",
+        ]
+    ) == 0
+    assert reports_out.exists()
+    assert latest_out.exists()
+    assert latest_out.read_bytes() == reports_out.read_bytes()
+
+
 def test_dashboard_with_explicit_output_in_latest(tmp_path: Path):
     index = tmp_path / "Index"
     cfg_path = _write_cfg(
@@ -71,18 +102,5 @@ def test_dashboard_with_explicit_output_in_latest(tmp_path: Path):
     _seed_db(scan, db)
 
     explicit = index / "latest" / "index_dashboard.xlsx"
-    assert main(["--config", str(cfg_path), "dashboard", "--output", str(explicit)]) == 0
-    assert explicit.exists()
-
-
-def test_dashboard_with_explicit_output(tmp_path: Path):
-    cfg_path = _write_cfg(tmp_path, reports=tmp_path / "reports")
-    app = load_app_config(cfg_path)
-    scan = tmp_path / "Clientes"
-    scan.mkdir()
-    db = app.index_db_path
-    _seed_db(scan, db)
-
-    explicit = tmp_path / "reports" / "index_dashboard_20000.xlsx"
     assert main(["--config", str(cfg_path), "dashboard", "--output", str(explicit)]) == 0
     assert explicit.exists()

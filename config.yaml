@@ -1,12 +1,13 @@
 # DespachoOps Index — producción Windows
 # Código: C:\DespachoOps\despachoops-index
-# Datos técnicos (local): C:\DespachoOpsData\Index
-# Salidas en red (solo dashboards/exportaciones; no SQLite ni OCR)
-shared_output_dir: "\\\\Luiscp\\d\\Cebrian y Fraile Abogados\\Index"
-shared_reports_dir: "\\\\Luiscp\\d\\Cebrian y Fraile Abogados\\Index\\reports"
-shared_latest_dir: "\\\\Luiscp\\d\\Cebrian y Fraile Abogados\\Index\\latest"
+# Motor local: C:\DespachoOpsData\Index
+# Resultados compartidos: \\Luiscp\d\Cebrian y Fraile Abogados\Index
 scan_root: "\\\\Luiscp\\d\\Cebrian y Fraile Abogados\\Clientes"
 data_dir: "C:/DespachoOpsData/Index"
+
+shared_output_dir: "\\\\Luiscp\\d\\Cebrian y Fraile Abogados\\Index"
+reports_dir: "\\\\Luiscp\\d\\Cebrian y Fraile Abogados\\Index\\reports"
+latest_dir: "\\\\Luiscp\\d\\Cebrian y Fraile Abogados\\Index\\latest"
 
 recursive: true
 max_files_per_index_run: 5000
