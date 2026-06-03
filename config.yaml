@@ -42,8 +42,28 @@ exclude_patterns:
   - "*.part"
 
 exclude_path_patterns:
-  - "*/node_modules/*"
   - "*/.git/*"
+  - "*/node_modules/*"
+  - "*/descarga/css/*"
+  - "*/descarga/js/*"
+  - "*/css/images/*"
+  - "*/css/image/*"
+
+exclude_extensions:
+  - .gif
+  - .css
+  - .js
+  - .map
+  - .ico
+  - .svg
+  - .woff
+  - .woff2
+  - .ttf
+  - .eot
+  - .less
+  - .scss
+  - .htm
+  - .html
 
 llm:
   enabled: true

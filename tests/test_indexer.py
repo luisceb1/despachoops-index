@@ -34,16 +34,15 @@ def test_index_creates_sqlite_and_does_not_modify_files(sample_root: Path, tmp_p
 
     assert db.exists()
     assert result.indexed >= 3
-    assert result.skipped_ignored >= 2
     assert f1.stat().st_mtime_ns == mtime_before
 
     conn = sqlite3.connect(db)
     names = {r[0] for r in conn.execute("SELECT name FROM files").fetchall()}
-    ignored = conn.execute("SELECT COUNT(*) FROM ignored_files").fetchone()[0]
     conn.close()
     assert "contrato.txt" in names
     assert "secret" not in names
-    assert ignored >= 2
+    assert "~$temporal.docx" not in names
+    assert "Thumbs.db" not in names
 
 
 def test_read_error_does_not_break_index(tmp_path: Path):

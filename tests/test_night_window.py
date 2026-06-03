@@ -30,6 +30,7 @@ def _minimal_config(**kwargs) -> AppConfig:
         exclude_dirs=(),
         exclude_patterns=(),
         exclude_path_patterns=(),
+        exclude_extensions=(),
         llm=LlmConfig(),
         worker_enabled=True,
         worker_interval_seconds=600,

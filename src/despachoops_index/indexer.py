@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-import fnmatch
-import os
 import sqlite3
 from dataclasses import dataclass
 from datetime import datetime
@@ -11,13 +9,12 @@ from despachoops_index.config import (
     DOCUMENT_EXTENSIONS,
     IndexOptions,
     LONG_PATH_THRESHOLD,
-    SKIP_DIRS,
-    SKIP_NAME_PATTERNS,
     TEXT_EXTENSIONS,
     TEXT_FTS_MAX,
     TEXT_PREVIEW_MAX,
 )
 from despachoops_index.hashutil import file_sha256
+from despachoops_index.walk import iter_scan_paths, skip_reason
 
 
 @dataclass(frozen=True)
@@ -45,13 +42,13 @@ def build_index(options: IndexOptions) -> IndexResult:
         scanned = indexed = skipped = unchanged = read_errors = with_text = 0
         limit_reached = False
 
-        for path in _iter_files(root):
+        for path in iter_scan_paths(root, options.scan_filters):
             scanned += 1
             if options.limit > 0 and indexed >= options.limit:
                 limit_reached = True
                 break
 
-            ignored, reason = _ignored_reason(path)
+            ignored, reason = skip_reason(path, options.scan_filters)
             if ignored:
                 _insert_ignored(conn, path, reason)
                 skipped += 1
@@ -165,26 +162,6 @@ def _init_schema(conn: sqlite3.Connection) -> bool:
         return True
     except sqlite3.OperationalError:
         return False
-
-
-def _iter_files(root: Path):
-    excluded = {d.lower() for d in SKIP_DIRS}
-    for dir_root, dirs, files in os.walk(root):
-        dirs[:] = [d for d in sorted(dirs) if d.lower() not in excluded]
-        for name in sorted(files):
-            yield Path(dir_root) / name
-
-
-def _matches_skip_name(name: str) -> bool:
-    return any(fnmatch.fnmatch(name, pat) for pat in SKIP_NAME_PATTERNS)
-
-
-def _ignored_reason(path: Path) -> tuple[bool, str]:
-    if _matches_skip_name(path.name):
-        return True, "patron_ignorado"
-    if path.suffix.lower() in {".tmp", ".lock", ".crdownload", ".part"}:
-        return True, "extension_temporal"
-    return False, ""
 
 
 def _existing_row(conn: sqlite3.Connection, path: Path) -> sqlite3.Row | None:

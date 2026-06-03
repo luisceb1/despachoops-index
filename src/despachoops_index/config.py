@@ -23,10 +23,57 @@ SKIP_NAME_PATTERNS = (
     "*.part",
 )
 
+# Ruido web / assets estáticos (no documentación de despacho)
+SKIP_EXTENSIONS = frozenset(
+    {
+        ".gif",
+        ".css",
+        ".js",
+        ".map",
+        ".ico",
+        ".svg",
+        ".woff",
+        ".woff2",
+        ".ttf",
+        ".eot",
+        ".less",
+        ".scss",
+    }
+)
+
+SKIP_PATH_PATTERNS = (
+    "*/.git/*",
+    "*/node_modules/*",
+)
+
 DOCUMENT_EXTENSIONS = frozenset({".pdf", ".docx", ".xlsx", ".xls", ".txt", ".csv"})
 TEXT_EXTENSIONS = frozenset({".txt", ".csv"})
 TEXT_PREVIEW_MAX = 4000
 TEXT_FTS_MAX = 20000
+
+
+@dataclass(frozen=True)
+class ScanFilters:
+    exclude_dirs: tuple[str, ...] = ()
+    exclude_patterns: tuple[str, ...] = ()
+    exclude_path_patterns: tuple[str, ...] = ()
+    exclude_extensions: tuple[str, ...] = ()
+
+    def merged_dirs(self) -> frozenset[str]:
+        return frozenset({d.lower() for d in self.exclude_dirs} | SKIP_DIRS)
+
+    def merged_name_patterns(self) -> tuple[str, ...]:
+        return self.exclude_patterns + SKIP_NAME_PATTERNS
+
+    def merged_path_patterns(self) -> tuple[str, ...]:
+        return self.exclude_path_patterns + SKIP_PATH_PATTERNS
+
+    def merged_extensions(self) -> frozenset[str]:
+        extra = {
+            e.lower() if e.startswith(".") else f".{e.lower()}"
+            for e in self.exclude_extensions
+        }
+        return SKIP_EXTENSIONS | extra
 
 
 @dataclass(frozen=True)
@@ -39,6 +86,7 @@ class IndexOptions:
     use_ocr_cache: bool = False
     ocr_cache_dir: Path | None = None
     skip_large_files_mb: int = 0
+    scan_filters: ScanFilters = ScanFilters()
 
 
 @dataclass(frozen=True)
@@ -89,6 +137,7 @@ class AppConfig:
     exclude_dirs: tuple[str, ...]
     exclude_patterns: tuple[str, ...]
     exclude_path_patterns: tuple[str, ...]
+    exclude_extensions: tuple[str, ...]
     llm: LlmConfig
     worker_enabled: bool
     worker_interval_seconds: int
@@ -105,6 +154,12 @@ class AppConfig:
             use_ocr_cache=True,
             ocr_cache_dir=self.ocr_cache_dir,
             skip_large_files_mb=self.index_skip_large_files_mb,
+            scan_filters=ScanFilters(
+                exclude_dirs=self.exclude_dirs,
+                exclude_patterns=self.exclude_patterns,
+                exclude_path_patterns=self.exclude_path_patterns,
+                exclude_extensions=self.exclude_extensions,
+            ),
         )
 
 
@@ -144,6 +199,7 @@ def load_app_config(path: Path | str = "config.yaml") -> AppConfig:
         exclude_dirs=_tuple(raw.get("exclude_dirs")),
         exclude_patterns=_tuple(raw.get("exclude_patterns")),
         exclude_path_patterns=_tuple(raw.get("exclude_path_patterns")),
+        exclude_extensions=_tuple(raw.get("exclude_extensions")),
         llm=_parse_llm(raw.get("llm")),
         worker_enabled=bool(worker.get("enabled", True)),
         worker_interval_seconds=int(worker.get("interval_seconds", 600)),

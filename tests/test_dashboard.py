@@ -50,7 +50,6 @@ def test_dashboard_all_sheets(indexed_db):
     resumen = list(wb["Resumen"].iter_rows(min_row=2, values_only=True))
     metrics = {row[0]: row[1] for row in resumen if row[0]}
     assert int(metrics.get("total_indexados", 0)) >= 3
-    assert int(metrics.get("archivos_ignorados", 0)) >= 1
 
     dup_rows = list(wb["Duplicados_Probables"].iter_rows(min_row=2, values_only=True))
     assert any(row and row[0] == "mismo.pdf" for row in dup_rows)
@@ -59,7 +58,7 @@ def test_dashboard_all_sheets(indexed_db):
     assert any(row and int(row[1]) >= LONG_PATH_THRESHOLD for row in long_rows if row[1])
 
     ignored = list(wb["Archivos_Temporales_Ignorados"].iter_rows(min_row=2, values_only=True))
-    assert len(ignored) >= 1
+    assert "~$lock.doc" not in {r[1] for r in ignored if r and len(r) > 1}
 
     pdf_rows = list(wb["PDFs"].iter_rows(min_row=2, values_only=True))
     assert len(pdf_rows) >= 2

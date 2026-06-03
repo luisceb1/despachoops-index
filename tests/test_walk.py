@@ -1,9 +1,12 @@
+import sqlite3
 from pathlib import Path
 
 import yaml
 
-from despachoops_index.config import load_app_config
-from despachoops_index.walk import iter_scan_files
+from despachoops_index.config import ScanFilters, load_app_config
+from despachoops_index.indexer import build_index
+from despachoops_index.config import IndexOptions
+from despachoops_index.walk import iter_scan_files, iter_scan_paths
 
 
 def test_walk_skips_git_and_temp(tmp_path: Path):
@@ -25,3 +28,53 @@ def test_walk_skips_git_and_temp(tmp_path: Path):
     assert "ok.txt" in paths
     assert "bad.tmp" not in paths
     assert "x" not in paths
+
+
+def test_walk_skips_web_noise(tmp_path: Path):
+    root = tmp_path / "scan"
+    web = root / "cliente" / "descarga" / "css"
+    web.mkdir(parents=True)
+    (root / "expediente.pdf").write_bytes(b"%PDF-1.4")
+    (web / "theme.css").write_text("body{}", encoding="utf-8")
+    (root / "logo.gif").write_bytes(b"GIF89a")
+    js_dir = root / "descarga" / "js"
+    js_dir.mkdir(parents=True)
+    (js_dir / "app.js").write_text("console.log(1)", encoding="utf-8")
+    img_dir = root / "assets" / "css" / "images"
+    img_dir.mkdir(parents=True)
+    (img_dir / "icon.png").write_bytes(b"\x89PNG")
+
+    filters = ScanFilters(
+        exclude_path_patterns=(
+            "*/descarga/css/*",
+            "*/descarga/js/*",
+            "*/css/images/*",
+        ),
+        exclude_extensions=(".png",),
+    )
+    names = {p.name for p in iter_scan_paths(root, filters)}
+    assert "expediente.pdf" in names
+    assert "theme.css" not in names
+    assert "logo.gif" not in names
+    assert "app.js" not in names
+    assert "icon.png" not in names
+
+
+def test_indexer_uses_scan_filters(tmp_path: Path):
+    root = tmp_path / "docs"
+    root.mkdir()
+    (root / "contrato.txt").write_text("texto", encoding="utf-8")
+    (root / "bundle.js").write_text("// noise", encoding="utf-8")
+
+    db = tmp_path / "index.sqlite"
+    filters = ScanFilters()
+    build_index(IndexOptions(root=root, db_path=db, scan_filters=filters))
+    names = {p.name for p in iter_scan_paths(root, filters)}
+    assert "contrato.txt" in names
+    assert "bundle.js" not in names
+
+    conn = sqlite3.connect(db)
+    indexed = {r[0] for r in conn.execute("SELECT name FROM files").fetchall()}
+    conn.close()
+    assert "contrato.txt" in indexed
+    assert "bundle.js" not in indexed
