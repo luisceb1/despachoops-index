@@ -1,0 +1,47 @@
+# Python
+.venv/
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# Entorno / secretos
+.env
+.env.*
+config.local.yaml
+
+# Logs / temporales
+*.log
+logs/
+tmp/
+temp/
+*.tmp
+
+# Datos generados / auditoría
+*.csv
+*.xlsx
+*.sqlite
+*.sqlite-shm
+*.sqlite-wal
+*.db
+*.bak*
+*.backup*
+
+# Datos DespachoOps fuera del repo
+D:/DespachoOpsData/
+DespachoOpsData/
+
+# Sistema
+.DS_Store
+Thumbs.db
+
+# Build metadata
+*.egg-info/
+src/*.egg-info/
+src/despachoops_index.egg-info/
+
+# Local config
+config.yaml
+
+# Internal backup snapshots
+src/despachoops_index/web/app_backup_*.py
