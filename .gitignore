@@ -5,9 +5,10 @@ __pycache__/
 *.pyo
 *.pyd
 
-# Entorno / secretos
+# Entorno / secretos / configuración local
 .env
 .env.*
+config.yaml
 config.local.yaml
 
 # Logs / temporales
@@ -27,6 +28,14 @@ temp/
 *.bak*
 *.backup*
 
+# Build metadata
+*.egg-info/
+src/*.egg-info/
+src/despachoops_index.egg-info/
+
+# Internal backup snapshots
+src/despachoops_index/web/app_backup_*.py
+
 # Datos DespachoOps fuera del repo
 D:/DespachoOpsData/
 DespachoOpsData/
@@ -34,14 +43,3 @@ DespachoOpsData/
 # Sistema
 .DS_Store
 Thumbs.db
-
-# Build metadata
-*.egg-info/
-src/*.egg-info/
-src/despachoops_index.egg-info/
-
-# Local config
-config.yaml
-
-# Internal backup snapshots
-src/despachoops_index/web/app_backup_*.py
