@@ -192,6 +192,13 @@ class IndexColumns:
         return " | ".join(parts)
 
 
+@dataclass(frozen=True)
+class CsvReadResult:
+    rows: list[dict[str, str]]
+    fieldnames: list[str]
+    delimiter: str
+
+
 def fix_mojibake(value: str) -> str:
     if not isinstance(value, str):
         return value
@@ -212,15 +219,39 @@ def clean_row(row: dict[str, str]) -> dict[str, str]:
     }
 
 
-def detect_delimiter(lines: list[str]) -> str:
+def strip_sep_line(lines: list[str]) -> list[str]:
     if lines and lines[0].strip().lower() == "sep=;":
+        return lines[1:]
+    return lines
+
+
+def detect_delimiter(lines: list[str]) -> str:
+    data_lines = strip_sep_line(lines)
+    sample = "\n".join(data_lines[:20])
+
+    if sample:
+        try:
+            dialect = csv.Sniffer().sniff(sample, delimiters=";,\t")
+            if dialect.delimiter in {";", ",", "\t"}:
+                return dialect.delimiter
+        except csv.Error:
+            pass
+
+    header = data_lines[0] if data_lines else ""
+    comma_count = header.count(",")
+    semicolon_count = header.count(";")
+    tab_count = header.count("\t")
+
+    if tab_count > comma_count and tab_count > semicolon_count:
+        return "\t"
+    if comma_count > semicolon_count:
+        return ","
+    if semicolon_count > comma_count:
         return ";"
-
-    header = lines[0] if lines else ""
-    return ";" if header.count(";") >= header.count(",") else ","
+    return ";"
 
 
-def read_csv_rows(path: Path) -> list[dict[str, str]]:
+def read_csv_flexible(path: Path) -> CsvReadResult:
     last_error: Exception | None = None
 
     for encoding in ("utf-8-sig", "utf-8", "cp1252", "latin1"):
@@ -232,13 +263,12 @@ def read_csv_rows(path: Path) -> list[dict[str, str]]:
     else:
         raise last_error or UnicodeDecodeError("utf-8", b"", 0, 1, "unknown error")
 
-    lines = text.splitlines()
-    delimiter = detect_delimiter(lines)
-    if lines and lines[0].strip().lower() == "sep=;":
-        lines = lines[1:]
-
+    lines = strip_sep_line(text.splitlines())
+    delimiter = detect_delimiter(text.splitlines())
     reader = csv.DictReader(lines, delimiter=delimiter)
-    return [clean_row(row) for row in reader]
+    rows = [clean_row(row) for row in reader]
+    fieldnames = [field.strip() for field in (reader.fieldnames or [])]
+    return CsvReadResult(rows=rows, fieldnames=fieldnames, delimiter=delimiter)
 
 
 def normalize(value: str) -> str:
@@ -580,14 +610,27 @@ def write_xlsx(rows: list[dict[str, str]], output_path: Path) -> None:
     workbook.save(output_path)
 
 
-def print_summary(rows: list[dict[str, str]]) -> None:
+def printable_delimiter(delimiter: str) -> str:
+    return "\\t" if delimiter == "\t" else delimiter
+
+
+def print_summary(
+    rows: list[dict[str, str]],
+    inbox_csv: CsvReadResult,
+    live_csv: CsvReadResult,
+    index_columns: IndexColumns,
+) -> None:
     counts: dict[str, int] = {}
     for row in rows:
         estado = row["estado_asignacion"]
         counts[estado] = counts.get(estado, 0) + 1
 
-    print("Notificaciones:", len(rows))
-    print("Resumen:", counts)
+    print("Columnas detectadas live_expedientes:", index_columns.describe())
+    print("Delimiter inbox:", printable_delimiter(inbox_csv.delimiter))
+    print("Delimiter live_expedientes:", printable_delimiter(live_csv.delimiter))
+    print("Total filas notifica:", len(inbox_csv.rows))
+    print("Total filas expedientes:", len(live_csv.rows))
+    print("Resumen por estado_asignacion:", counts)
     print("Top 8:")
     ordered = sorted(rows, key=lambda row: int(row.get("match_score") or 0), reverse=True)
     for row in ordered[:8]:
@@ -620,13 +663,14 @@ def main() -> int:
     out_csv = Path(args.out_csv)
     out_xlsx = Path(args.out_xlsx)
 
-    notifications = read_csv_rows(notifica_inbox)
-    index_rows = read_csv_rows(live_expedientes)
-    output_rows = build_output_rows(notifications, index_rows)
+    inbox_csv = read_csv_flexible(notifica_inbox)
+    live_csv = read_csv_flexible(live_expedientes)
+    index_columns = detect_index_columns(live_csv.rows)
+    output_rows = build_output_rows(inbox_csv.rows, live_csv.rows)
 
     write_csv(output_rows, out_csv)
     write_xlsx(output_rows, out_xlsx)
-    print_summary(output_rows)
+    print_summary(output_rows, inbox_csv, live_csv, index_columns)
     print("CSV:", out_csv)
     print("XLSX:", out_xlsx)
 
@@ -635,6 +679,7 @@ def main() -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
+
 
 
 
