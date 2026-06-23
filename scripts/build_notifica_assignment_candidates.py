@@ -30,6 +30,12 @@ OUTPUT_FIELDS = [
     "download_status",
     "main_pdf_path",
     "receipt_path",
+    "assignment_nif",
+    "assignment_nif_source",
+    "certificate_nif",
+    "certificate_subject",
+    "represented_nif",
+    "represented_name",
     "client_context_json",
     "client_match_score",
     "client_match_reason",
@@ -166,6 +172,8 @@ NOTIFICATION_ALIASES = {
     "source": ("source", "origen", "buzon"),
     "received_at": ("received_at", "fecha_recepcion", "received"),
     "entity_nif": ("entity_nif", "nif", "cif", "dni", "destinatario_nif"),
+    "certificate_nif": ("certificate_nif", "certificado_nif", "cert_nif"),
+    "certificate_subject": ("certificate_subject", "certificate_label", "certificado", "certificado_subject"),
     "entity_name": (
         "entity_name",
         "entity",
@@ -197,6 +205,19 @@ class Match:
     score: int
     reasons: list[str]
     debug: str = ""
+
+
+@dataclass(frozen=True)
+class IdentityInfo:
+    assignment_nif: str
+    assignment_nif_source: str
+    entity_nif: str
+    certificate_nif: str
+    certificate_subject: str
+    represented_nif: str
+    represented_name: str
+    conflict: bool
+    relevant_nifs: set[str]
 
 
 @dataclass(frozen=True)
@@ -423,16 +444,77 @@ def representative_nif(entity_name: str) -> str:
     return normalize_nif(match.group(1)) if match else ""
 
 
-def notification_client_nif(row: dict[str, str]) -> str:
+def represented_name(entity_name: str) -> str:
+    if not entity_name:
+        return ""
+    cleaned = re.sub(r"\(?\s*R\s*:\s*[A-Z]\d{7,8}[A-Z0-9]\s*\)?", " ", entity_name, flags=re.I)
+    cleaned = remove_nifs(cleaned)
+    return " ".join(cleaned.replace("-", " ").split()).strip()
+
+
+def identity_info(row: dict[str, str]) -> IdentityInfo:
     entity_name = notification_value(row, "entity_name")
-    return representative_nif(entity_name) or normalize_nif(notification_value(row, "entity_nif"))
+    cert_subject = notification_value(row, "certificate_subject")
+    represented = representative_nif(entity_name)
+    entity = normalize_nif(notification_value(row, "entity_nif"))
+    certificate = normalize_nif(notification_value(row, "certificate_nif"))
+    cert_nifs = extract_nifs(cert_subject)
+    if not certificate and len(cert_nifs) == 1:
+        certificate = sorted(cert_nifs)[0]
+
+    if represented:
+        assignment = represented
+        source = "represented_nif"
+    elif entity:
+        assignment = entity
+        source = "entity_nif"
+    elif certificate:
+        assignment = certificate
+        source = "certificate_nif"
+    else:
+        assignment = ""
+        source = "unknown"
+
+    if not certificate and assignment and assignment in cert_nifs:
+        certificate = assignment
+
+    relevant = {nif for nif in (represented, entity, certificate) if nif}
+    conflict = bool(represented and entity and represented != entity)
+    if not represented and entity and certificate and entity != certificate:
+        conflict = False
+
+    return IdentityInfo(
+        assignment_nif=assignment,
+        assignment_nif_source=source,
+        entity_nif=entity,
+        certificate_nif=certificate,
+        certificate_subject=cert_subject,
+        represented_nif=represented,
+        represented_name=represented_name(entity_name),
+        conflict=conflict,
+        relevant_nifs=relevant,
+    )
+
+
+def notification_client_nif(row: dict[str, str]) -> str:
+    return identity_info(row).assignment_nif
 
 
 def notification_client_values(row: dict[str, str]) -> list[str]:
-    return [
+    info = identity_info(row)
+    values = [
+        info.represented_name,
         notification_value(row, "entity_name"),
         first_present(row, ("cliente_sugerido", "cliente", "cliente_detectado")),
+    ]
+    return [value for value in values if value]
+
+
+def notification_reinforcement_values(row: dict[str, str]) -> list[str]:
+    return [
         notification_value(row, "title"),
+        first_present(row, ("procedure", "procedimiento", "numero_procedimiento")),
+        first_present(row, ("sender", "remitente", "organismo")),
     ]
 
 
@@ -442,7 +524,7 @@ def notification_client_tokens(
 ) -> set[str]:
     entity_name = notification_value(row, "entity_name")
     extra_stop = REPRESENTATIVE_TOKENS if representative_nif(entity_name) else set()
-    tokens = significant_tokens(*notification_client_values(row), extra_stop=extra_stop)
+    tokens = significant_tokens(*notification_client_values(row), *notification_reinforcement_values(row), extra_stop=extra_stop)
     client_nif = notification_client_nif(row)
     if token_hints and client_nif:
         tokens.update(token_hints.get(client_nif, set()))
@@ -607,16 +689,26 @@ def score_client_context(
     reasons: list[str] = []
     debug_parts: list[str] = []
 
-    client_nif = notification_client_nif(notification)
+    info = identity_info(notification)
+    assignment_nif = info.assignment_nif
     notif_tokens = notification_client_tokens(notification, token_hints=token_hints)
     filename_hits = decisive_token_overlap(notif_tokens, context.path_tokens)
     json_hits = sorted(notif_tokens & context.text_tokens)
     strong_name = client_name_strong_match(notif_tokens, context)
-    nif_match = bool(client_nif and client_nif in context.normalized_nif_text)
+    assignment_nif_match = bool(assignment_nif and assignment_nif in context.normalized_nif_text)
+    certificate_match = bool(
+        info.certificate_nif
+        and info.certificate_nif == assignment_nif
+        and info.certificate_nif in context.normalized_nif_text
+    )
 
-    if nif_match:
+    if assignment_nif_match:
         score += 80
-        reasons.append("NIF en client_context")
+        reasons.append(f"{info.assignment_nif_source} en client_context")
+
+    if certificate_match:
+        score += 20
+        reasons.append("certificate_nif confirma assignment_nif")
 
     if filename_hits:
         score += 60
@@ -630,15 +722,17 @@ def score_client_context(
         score += 25
         reasons.append("tokens cliente en JSON: " + ", ".join(json_hits[:6]))
 
-    if nif_match and not filename_hits and not strong_name:
+    if assignment_nif_match and not filename_hits and not strong_name:
         score -= 40
         reasons.append("penalizacion NIF sin tokens de nombre")
 
-    if client_nif and not nif_match and score >= 80:
+    if assignment_nif and not assignment_nif_match and score >= 80:
         score = 79
-        reasons.append("capado: contexto sin NIF de la notificacion")
+        reasons.append("capado: contexto sin assignment_nif")
 
-    debug_parts.append(f"client_nif={client_nif or '-'}")
+    debug_parts.append(f"assignment_nif={assignment_nif or '-'}")
+    debug_parts.append(f"assignment_source={info.assignment_nif_source}")
+    debug_parts.append(f"certificate_nif={info.certificate_nif or '-'}")
     debug_parts.append("notif_client_tokens=" + (",".join(sorted(notif_tokens)) or "-"))
     debug_parts.append("context_name_tokens=" + (",".join(sorted(context.name_tokens)) or "-"))
     debug_parts.append("filename_hits=" + (",".join(filename_hits) or "-"))
@@ -765,13 +859,17 @@ def build_output_rows(
     token_hints = build_nif_token_hints(notifications)
 
     for notification in notifications:
+        info = identity_info(notification)
         client_match = best_client_context(notification, contexts, token_hints)
         expediente_match = choose_expediente(notification, client_match, index_rows, columns)
         client_context = client_match.context
         has_client = client_context is not None and client_match.score >= 80
         has_expediente = expediente_match.row is not None and expediente_match.score >= 50
 
-        if has_client and has_expediente:
+        if info.conflict and not has_client:
+            estado = "conflicto_identidad"
+            accion = "revisar_manualmente"
+        elif has_client and has_expediente:
             estado = "pendiente_confirmacion"
             accion = "revisar_y_confirmar_destino"
         elif has_client:
@@ -800,6 +898,12 @@ def build_output_rows(
                 "download_status": notification_value(notification, "download_status"),
                 "main_pdf_path": notification_value(notification, "main_pdf_path"),
                 "receipt_path": notification_value(notification, "receipt_path"),
+                "assignment_nif": info.assignment_nif,
+                "assignment_nif_source": info.assignment_nif_source,
+                "certificate_nif": info.certificate_nif,
+                "certificate_subject": info.certificate_subject,
+                "represented_nif": info.represented_nif,
+                "represented_name": info.represented_name,
                 "client_context_json": str(client_context.json_path) if has_client and client_context else "",
                 "client_match_score": str(client_match.score),
                 "client_match_reason": " | ".join(client_match.reasons),
@@ -884,7 +988,7 @@ def print_summary(
     print("Columnas detectadas live_expedientes:", index_columns.describe())
     print("Delimiter inbox:", printable_delimiter(inbox_csv.delimiter))
     print("Delimiter live_expedientes:", printable_delimiter(live_csv.delimiter))
-    print("Total filas notifica:", len(inbox_csv.rows))
+    print("Total notificaciones:", len(inbox_csv.rows))
     print("Total filas expedientes:", len(live_csv.rows))
     print("Total contexts:", len(contexts))
     print("Resumen por estado_asignacion:", counts)
@@ -895,8 +999,9 @@ def print_summary(
             " - ".join(
                 [
                     row.get("notification_id", ""),
+                    row.get("assignment_nif", ""),
+                    row.get("assignment_nif_source", ""),
                     row.get("estado_asignacion", ""),
-                    row.get("client_match_score", ""),
                     row.get("cliente_sugerido", ""),
                     row.get("expediente_sugerido", ""),
                     row.get("client_match_reason", ""),
@@ -939,6 +1044,9 @@ def main() -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
+
+
+
 
 
 
