@@ -2,6 +2,7 @@
 
 import argparse
 import csv
+import json
 import re
 import unicodedata
 from dataclasses import dataclass
@@ -15,6 +16,7 @@ from openpyxl.utils import get_column_letter
 
 DEFAULT_NOTIFICA_INBOX = r"C:\DespachoOpsData\Notifica\notificaciones_inbox.csv"
 DEFAULT_LIVE_EXPEDIENTES = r"D:\DespachoOpsData\Index\live_expedientes_index.csv"
+DEFAULT_CLIENT_CONTEXT_DIR = r"D:\DespachoOpsData\Index\client_context_index"
 DEFAULT_OUT_CSV = r"D:\DespachoOpsData\Index\notifica_assignment_candidates.csv"
 DEFAULT_OUT_XLSX = r"D:\DespachoOpsData\Index\notifica_assignment_candidates.xlsx"
 
@@ -28,6 +30,9 @@ OUTPUT_FIELDS = [
     "download_status",
     "main_pdf_path",
     "receipt_path",
+    "client_context_json",
+    "client_match_score",
+    "client_match_reason",
     "cliente_sugerido",
     "expediente_sugerido",
     "expediente_path",
@@ -113,6 +118,12 @@ COMPANY_FORM_TOKENS = {
     "anonima",
 }
 
+REPRESENTATIVE_TOKENS = {
+    "juan",
+    "carlos",
+    "garcia",
+}
+
 INDEX_COLUMN_ALIASES = {
     "cliente": (
         "cliente",
@@ -168,10 +179,41 @@ NOTIFICATION_ALIASES = {
     "receipt_path": ("receipt_path", "acuse_path", "justificante_path"),
 }
 
+CLIENT_NAME_KEYS = {
+    "client_name",
+    "cliente",
+    "nombre_cliente",
+    "cliente_nombre",
+    "display_name",
+    "name",
+    "nombre",
+    "razon_social",
+}
+
 
 @dataclass(frozen=True)
 class Match:
     row: dict[str, str] | None
+    score: int
+    reasons: list[str]
+    debug: str = ""
+
+
+@dataclass(frozen=True)
+class ClientContext:
+    json_path: Path
+    stem: str
+    client_name: str
+    normalized_text: str
+    normalized_nif_text: str
+    text_tokens: set[str]
+    path_tokens: set[str]
+    name_tokens: set[str]
+
+
+@dataclass(frozen=True)
+class ClientMatch:
+    context: ClientContext | None
     score: int
     reasons: list[str]
     debug: str = ""
@@ -287,27 +329,78 @@ def normalize_nif(value: str) -> str:
     return re.sub(r"[^A-Z0-9]", "", (value or "").upper())
 
 
+def extract_nifs(value: str) -> set[str]:
+    value = normalize(value).upper()
+    patterns = (
+        r"\b[XYZ]\d{7}[A-Z]\b",
+        r"\b\d{8}[A-Z]\b",
+        r"\b[A-Z]\d{7,8}[A-Z0-9]\b",
+    )
+    found: set[str] = set()
+    for pattern in patterns:
+        found.update(re.findall(pattern, value))
+    return {normalize_nif(item) for item in found if normalize_nif(item)}
+
+
 def remove_nifs(value: str) -> str:
     value = re.sub(r"\b[XYZ]?\d{7,8}[A-Z]\b", " ", value.upper())
     value = re.sub(r"\b[A-Z]\d{7,8}[A-Z0-9]\b", " ", value)
     return value
 
 
-def name_tokens(value: str) -> list[str]:
+def is_noise_token(token: str, allow_short_nif: bool = False) -> bool:
+    if token in STOP_TOKENS:
+        return True
+    if token in COMPANY_FORM_TOKENS:
+        return True
+    if re.fullmatch(r"20[2-3][0-9]", token):
+        return True
+    if token.isdigit():
+        return True
+    if re.fullmatch(r"[a-z]\d{7,8}[a-z0-9]", token):
+        return True
+    if re.fullmatch(r"[xyz]?\d{7,8}[a-z]", token):
+        return True
+    if len(token) < 4 and not allow_short_nif:
+        return True
+    return False
+
+
+def significant_tokens(*values: str, extra_stop: set[str] | None = None) -> set[str]:
+    tokens: set[str] = set()
+    extra_stop = extra_stop or set()
+
+    for value in values:
+        for token in normalize(value).split():
+            if token in extra_stop:
+                continue
+            if is_noise_token(token):
+                continue
+            tokens.add(token)
+
+    return tokens
+
+
+def name_tokens(value: str, extra_stop: set[str] | None = None) -> list[str]:
     normalized = normalize(remove_nifs(value))
+    extra_stop = extra_stop or set()
     return [
         token
         for token in normalized.split()
-        if token not in COMPANY_FORM_TOKENS and token not in STOP_TOKENS and len(token) >= 3
+        if token not in extra_stop and not is_noise_token(token)
     ]
 
 
-def name_variants(value: str) -> set[str]:
-    tokens = name_tokens(value)
+def name_variants(value: str, extra_stop: set[str] | None = None) -> set[str]:
+    tokens = name_tokens(value, extra_stop=extra_stop)
     if not tokens:
         return set()
     variants = {" ".join(tokens), " ".join(sorted(tokens))}
     return {variant for variant in variants if variant}
+
+
+def display_name_from_stem(stem: str) -> str:
+    return " ".join(part.capitalize() for part in stem.replace("_", " ").split())
 
 
 def first_present(row: dict[str, str], aliases: Iterable[str]) -> str:
@@ -319,6 +412,55 @@ def first_present(row: dict[str, str], aliases: Iterable[str]) -> str:
             return row[key].strip()
 
     return ""
+
+
+def notification_value(row: dict[str, str], canonical: str) -> str:
+    return first_present(row, NOTIFICATION_ALIASES[canonical])
+
+
+def representative_nif(entity_name: str) -> str:
+    match = re.search(r"\(?\s*R\s*:\s*([A-Z]\d{7,8}[A-Z0-9])", entity_name or "", flags=re.I)
+    return normalize_nif(match.group(1)) if match else ""
+
+
+def notification_client_nif(row: dict[str, str]) -> str:
+    entity_name = notification_value(row, "entity_name")
+    return representative_nif(entity_name) or normalize_nif(notification_value(row, "entity_nif"))
+
+
+def notification_client_values(row: dict[str, str]) -> list[str]:
+    return [
+        notification_value(row, "entity_name"),
+        first_present(row, ("cliente_sugerido", "cliente", "cliente_detectado")),
+        notification_value(row, "title"),
+    ]
+
+
+def notification_client_tokens(
+    row: dict[str, str],
+    token_hints: dict[str, set[str]] | None = None,
+) -> set[str]:
+    entity_name = notification_value(row, "entity_name")
+    extra_stop = REPRESENTATIVE_TOKENS if representative_nif(entity_name) else set()
+    tokens = significant_tokens(*notification_client_values(row), extra_stop=extra_stop)
+    client_nif = notification_client_nif(row)
+    if token_hints and client_nif:
+        tokens.update(token_hints.get(client_nif, set()))
+    return tokens
+
+
+def build_nif_token_hints(notifications: list[dict[str, str]]) -> dict[str, set[str]]:
+    hints: dict[str, set[str]] = {}
+    for notification in notifications:
+        client_nif = notification_client_nif(notification)
+        if not client_nif:
+            continue
+        hints.setdefault(client_nif, set()).update(notification_client_tokens(notification))
+    return hints
+
+
+def relevant_tokens(*values: str) -> set[str]:
+    return significant_tokens(*values)
 
 
 def detect_index_columns(rows: list[dict[str, str]]) -> IndexColumns:
@@ -369,39 +511,160 @@ def unique_join(values: Iterable[str], separator: str = " | ") -> str:
     return separator.join(cleaned)
 
 
-def relevant_tokens(*values: str) -> set[str]:
-    tokens: set[str] = set()
+def resolve_existing_path(path: Path) -> Path:
+    if path.exists():
+        return path
 
-    for value in values:
-        for token in normalize(value).split():
-            if len(token) < 4:
-                continue
-            if token in STOP_TOKENS:
-                continue
-            if token in COMPANY_FORM_TOKENS:
-                continue
-            if token.isdigit():
-                continue
-            if re.fullmatch(r"[a-z]\d{7,8}[a-z0-9]", token):
-                continue
-            if re.fullmatch(r"[xyz]?\d{7,8}[a-z]", token):
-                continue
-            if re.fullmatch(r"20[2-3][0-9]", token):
-                continue
-            tokens.add(token)
+    raw = str(path)
+    alternates = []
+    if raw.startswith("D:\\DespachoOpsData\\"):
+        alternates.append(Path(raw.replace("D:\\DespachoOpsData\\", "\\\\Luiscp\\d\\DespachoOpsData\\", 1)))
+    if raw.startswith("\\\\Luiscp\\d\\DespachoOpsData\\"):
+        alternates.append(Path(raw.replace("\\\\Luiscp\\d\\DespachoOpsData\\", "D:\\DespachoOpsData\\", 1)))
 
-    return tokens
+    for alternate in alternates:
+        if alternate.exists():
+            return alternate
+
+    return path
 
 
-def notification_value(row: dict[str, str], canonical: str) -> str:
-    return first_present(row, NOTIFICATION_ALIASES[canonical])
+def find_json_client_name(data: object) -> str:
+    if not isinstance(data, dict):
+        return ""
+
+    for key, value in data.items():
+        if normalize(str(key)) in CLIENT_NAME_KEYS and isinstance(value, (str, int, float)):
+            text = str(value).strip()
+            if text:
+                return text
+
+    return ""
 
 
-def notification_client_values(row: dict[str, str]) -> list[str]:
-    return [
-        notification_value(row, "entity_name"),
-        first_present(row, ("cliente_sugerido", "cliente", "cliente_detectado")),
-    ]
+def load_client_context(path: Path) -> ClientContext:
+    raw_text = path.read_text(encoding="utf-8", errors="replace")
+    client_name = ""
+    try:
+        data = json.loads(raw_text)
+        client_name = find_json_client_name(data)
+        text = json.dumps(data, ensure_ascii=False, sort_keys=True)
+    except Exception:
+        text = raw_text
+
+    if not client_name:
+        client_name = display_name_from_stem(path.stem)
+
+    normalized_text = normalize(text)
+    path_text = f"{path.stem} {path.name} {path}"
+    return ClientContext(
+        json_path=path,
+        stem=path.stem,
+        client_name=client_name,
+        normalized_text=normalized_text,
+        normalized_nif_text=normalize_nif(text),
+        text_tokens=significant_tokens(text),
+        path_tokens=significant_tokens(path_text),
+        name_tokens=significant_tokens(client_name, path.stem),
+    )
+
+
+def load_client_contexts(context_dir: Path) -> list[ClientContext]:
+    context_dir = resolve_existing_path(context_dir)
+    if not context_dir.exists():
+        return []
+
+    contexts = []
+    for path in sorted(context_dir.glob("*.json")):
+        try:
+            contexts.append(load_client_context(path))
+        except Exception:
+            continue
+    return contexts
+
+
+def decisive_token_overlap(left: set[str], right: set[str]) -> list[str]:
+    overlap = sorted(left & right)
+    if len(overlap) >= 2:
+        return overlap
+    if overlap and len(overlap[0]) >= 8:
+        return overlap
+    return []
+
+
+def client_name_strong_match(notification_tokens: set[str], context: ClientContext) -> bool:
+    if not notification_tokens or not context.name_tokens:
+        return False
+    return bool(decisive_token_overlap(notification_tokens, context.name_tokens))
+
+
+def score_client_context(
+    notification: dict[str, str],
+    context: ClientContext,
+    token_hints: dict[str, set[str]],
+) -> ClientMatch:
+    score = 0
+    reasons: list[str] = []
+    debug_parts: list[str] = []
+
+    client_nif = notification_client_nif(notification)
+    notif_tokens = notification_client_tokens(notification, token_hints=token_hints)
+    filename_hits = decisive_token_overlap(notif_tokens, context.path_tokens)
+    json_hits = sorted(notif_tokens & context.text_tokens)
+    strong_name = client_name_strong_match(notif_tokens, context)
+    nif_match = bool(client_nif and client_nif in context.normalized_nif_text)
+
+    if nif_match:
+        score += 80
+        reasons.append("NIF en client_context")
+
+    if filename_hits:
+        score += 60
+        reasons.append("tokens cliente en filename/json_path: " + ", ".join(filename_hits[:6]))
+
+    if strong_name:
+        score += 50
+        reasons.append("nombre cliente fuerte")
+
+    if json_hits:
+        score += 25
+        reasons.append("tokens cliente en JSON: " + ", ".join(json_hits[:6]))
+
+    if nif_match and not filename_hits and not strong_name:
+        score -= 40
+        reasons.append("penalizacion NIF sin tokens de nombre")
+
+    if client_nif and not nif_match and score >= 80:
+        score = 79
+        reasons.append("capado: contexto sin NIF de la notificacion")
+
+    debug_parts.append(f"client_nif={client_nif or '-'}")
+    debug_parts.append("notif_client_tokens=" + (",".join(sorted(notif_tokens)) or "-"))
+    debug_parts.append("context_name_tokens=" + (",".join(sorted(context.name_tokens)) or "-"))
+    debug_parts.append("filename_hits=" + (",".join(filename_hits) or "-"))
+    debug_parts.append("json_hits=" + (",".join(json_hits[:12]) or "-"))
+
+    return ClientMatch(
+        context=context,
+        score=max(0, min(score, 100)),
+        reasons=reasons,
+        debug=" | ".join(debug_parts),
+    )
+
+
+def best_client_context(
+    notification: dict[str, str],
+    contexts: list[ClientContext],
+    token_hints: dict[str, set[str]],
+) -> ClientMatch:
+    best = ClientMatch(context=None, score=0, reasons=[], debug="")
+
+    for context in contexts:
+        current = score_client_context(notification, context, token_hints)
+        if current.score > best.score:
+            best = current
+
+    return best
 
 
 def index_cliente(row: dict[str, str] | None, columns: IndexColumns) -> str:
@@ -427,114 +690,103 @@ def index_nifs(row: dict[str, str], columns: IndexColumns) -> set[str]:
     return {nif for value in values for nif in [normalize_nif(value)] if nif}
 
 
-def client_match_score(notification_values: list[str], index_values: list[str]) -> tuple[int, str]:
-    notif_variants = set()
-    index_variants = set()
+def client_row_score(context: ClientContext, row: dict[str, str], columns: IndexColumns) -> tuple[int, str]:
+    row_client_values = values_from_columns(row, columns.cliente)
+    row_path_values = values_from_columns(row, columns.ruta)
+    row_tokens = significant_tokens(unique_join(row_client_values), unique_join(row_path_values))
+    context_tokens = context.name_tokens | context.path_tokens
+    overlap = sorted(context_tokens & row_tokens)
 
-    for value in notification_values:
-        notif_variants.update(name_variants(value))
-    for value in index_values:
-        index_variants.update(name_variants(value))
-
-    if notif_variants and index_variants and notif_variants & index_variants:
-        return 50, "cliente exacto/normalizado"
-
-    notif_token_sets = [set(name_tokens(value)) for value in notification_values]
-    index_token_sets = [set(name_tokens(value)) for value in index_values]
-
-    best_overlap = set()
-    for left in notif_token_sets:
-        for right in index_token_sets:
-            overlap = left & right
-            if len(overlap) > len(best_overlap):
-                best_overlap = overlap
-
-    if len(best_overlap) >= 2:
-        return 30, "cliente parcial: " + ", ".join(sorted(best_overlap))
-
+    if not overlap:
+        return 0, ""
+    if len(overlap) >= 2 or any(len(token) >= 8 for token in overlap):
+        return 50, "cliente en expediente vivo: " + ", ".join(overlap[:6])
     return 0, ""
 
 
-def score_against_index(
+def choose_expediente(
     notification: dict[str, str],
-    index_row: dict[str, str],
+    client_match: ClientMatch,
+    index_rows: list[dict[str, str]],
     columns: IndexColumns,
 ) -> Match:
-    score = 0
-    reasons: list[str] = []
-    debug_parts: list[str] = []
+    if not client_match.context:
+        return Match(row=None, score=0, reasons=[], debug="")
 
-    notif_nif = normalize_nif(notification_value(notification, "entity_nif"))
-    row_nifs = index_nifs(index_row, columns)
-    if notif_nif and row_nifs and notif_nif in row_nifs:
-        score += 70
-        reasons.append("NIF exacto")
-    debug_parts.append(f"notif_nif={notif_nif or '-'}")
-    debug_parts.append(f"index_nifs={','.join(sorted(row_nifs)) if row_nifs else '-'}")
-
-    index_client_values = values_from_columns(index_row, columns.cliente)
-    client_score, client_reason = client_match_score(
-        notification_client_values(notification),
-        index_client_values,
-    )
-    if client_score:
-        score += client_score
-        reasons.append(client_reason)
-
+    best = Match(row=None, score=0, reasons=[], debug="")
     notif_tokens = relevant_tokens(
         notification_value(notification, "title"),
         first_present(notification, ("procedure", "procedimiento", "numero_procedimiento")),
         first_present(notification, ("sender", "remitente", "organismo")),
     )
-    index_tokens = relevant_tokens(
-        unique_join(values_from_columns(index_row, columns.expediente)),
-        unique_join(values_from_columns(index_row, columns.ruta)),
-    )
-    token_hits = sorted(notif_tokens & index_tokens)
 
-    if token_hits:
-        score += 20
-        reasons.append("tokens significativos en expediente/ruta: " + ", ".join(token_hits[:8]))
+    notificaciones_fallback: Match | None = None
 
-    debug_parts.append("notif_tokens=" + (",".join(sorted(notif_tokens)) or "-"))
-    debug_parts.append("index_tokens=" + (",".join(sorted(index_tokens)) or "-"))
-    debug_parts.append("token_hits=" + (",".join(token_hits) or "-"))
-    debug_parts.append("index_cliente=" + (unique_join(index_client_values) or "-"))
+    for row in index_rows:
+        base_score, base_reason = client_row_score(client_match.context, row, columns)
+        if not base_score:
+            continue
 
-    return Match(row=index_row, score=min(score, 100), reasons=reasons, debug=" | ".join(debug_parts))
+        expediente_text = unique_join(values_from_columns(row, columns.expediente))
+        ruta_text = unique_join(values_from_columns(row, columns.ruta))
+        row_tokens = relevant_tokens(expediente_text, ruta_text)
+        token_hits = sorted(notif_tokens & row_tokens)
+        score = base_score
+        reasons = [base_reason]
 
+        if token_hits:
+            score += 20
+            reasons.append("tokens expediente/ruta: " + ", ".join(token_hits[:6]))
 
-def best_match(
-    notification: dict[str, str],
-    index_rows: list[dict[str, str]],
-    columns: IndexColumns,
-) -> Match:
-    best = Match(row=None, score=0, reasons=[], debug="")
+        if "notificaciones" in normalize(expediente_text + " " + ruta_text).split():
+            fallback = Match(row=row, score=max(score, 50), reasons=[base_reason, "fallback Notificaciones"])
+            if notificaciones_fallback is None or fallback.score > notificaciones_fallback.score:
+                notificaciones_fallback = fallback
 
-    for index_row in index_rows:
-        current = score_against_index(notification, index_row, columns)
+        current = Match(row=row, score=min(score, 100), reasons=reasons)
         if current.score > best.score:
             best = current
 
-    return best
+    if best.score >= 50:
+        return best
+    if notificaciones_fallback:
+        return notificaciones_fallback
+    return Match(row=None, score=0, reasons=[], debug="cliente identificado sin expediente vivo claro")
 
 
 def build_output_rows(
     notifications: list[dict[str, str]],
     index_rows: list[dict[str, str]],
+    contexts: list[ClientContext],
 ) -> list[dict[str, str]]:
     output_rows: list[dict[str, str]] = []
     columns = detect_index_columns(index_rows)
     columns_detected = columns.describe()
+    token_hints = build_nif_token_hints(notifications)
 
     for notification in notifications:
-        match = best_match(notification, index_rows, columns)
-        matched = match.row if match.row and match.score >= 50 else None
-        estado = "pendiente_confirmacion" if match.score >= 50 else "requiere_revision"
-        accion = (
-            "revisar_y_confirmar_destino"
-            if match.score >= 50
-            else "revisar_manualmente"
+        client_match = best_client_context(notification, contexts, token_hints)
+        expediente_match = choose_expediente(notification, client_match, index_rows, columns)
+        client_context = client_match.context
+        has_client = client_context is not None and client_match.score >= 80
+        has_expediente = expediente_match.row is not None and expediente_match.score >= 50
+
+        if has_client and has_expediente:
+            estado = "pendiente_confirmacion"
+            accion = "revisar_y_confirmar_destino"
+        elif has_client:
+            estado = "cliente_identificado"
+            accion = "revisar_manualmente"
+        else:
+            estado = "requiere_revision"
+            accion = "revisar_manualmente"
+
+        cliente_sugerido = client_context.client_name if has_client and client_context else ""
+        expediente_row = expediente_match.row if has_client and has_expediente else None
+        match_debug = " | ".join(
+            part
+            for part in (client_match.debug, expediente_match.debug)
+            if part
         )
 
         output_rows.append(
@@ -548,16 +800,19 @@ def build_output_rows(
                 "download_status": notification_value(notification, "download_status"),
                 "main_pdf_path": notification_value(notification, "main_pdf_path"),
                 "receipt_path": notification_value(notification, "receipt_path"),
-                "cliente_sugerido": index_cliente(matched, columns) if matched else "",
-                "expediente_sugerido": index_expediente(matched, columns) if matched else "",
-                "expediente_path": index_path(matched, columns) if matched else "",
-                "match_score": str(match.score),
-                "match_reason": " | ".join(match.reasons),
+                "client_context_json": str(client_context.json_path) if has_client and client_context else "",
+                "client_match_score": str(client_match.score),
+                "client_match_reason": " | ".join(client_match.reasons),
+                "cliente_sugerido": cliente_sugerido,
+                "expediente_sugerido": index_expediente(expediente_row, columns) if expediente_row else "",
+                "expediente_path": index_path(expediente_row, columns) if expediente_row else "",
+                "match_score": str(expediente_match.score if has_expediente else client_match.score),
+                "match_reason": " | ".join(expediente_match.reasons),
                 "estado_asignacion": estado,
                 "accion_sugerida": accion,
-                "observaciones": "" if match.score >= 50 else "Sin match >=50 en indice vivo",
+                "observaciones": "" if estado == "pendiente_confirmacion" else "Revisar destino antes de mover nada",
                 "index_columns_detected": columns_detected,
-                "match_debug": match.debug,
+                "match_debug": match_debug,
             }
         )
 
@@ -618,6 +873,7 @@ def print_summary(
     rows: list[dict[str, str]],
     inbox_csv: CsvReadResult,
     live_csv: CsvReadResult,
+    contexts: list[ClientContext],
     index_columns: IndexColumns,
 ) -> None:
     counts: dict[str, int] = {}
@@ -630,19 +886,20 @@ def print_summary(
     print("Delimiter live_expedientes:", printable_delimiter(live_csv.delimiter))
     print("Total filas notifica:", len(inbox_csv.rows))
     print("Total filas expedientes:", len(live_csv.rows))
+    print("Total contexts:", len(contexts))
     print("Resumen por estado_asignacion:", counts)
     print("Top 8:")
-    ordered = sorted(rows, key=lambda row: int(row.get("match_score") or 0), reverse=True)
+    ordered = sorted(rows, key=lambda row: int(row.get("client_match_score") or 0), reverse=True)
     for row in ordered[:8]:
         print(
             " - ".join(
                 [
                     row.get("notification_id", ""),
                     row.get("estado_asignacion", ""),
-                    row.get("match_score", ""),
+                    row.get("client_match_score", ""),
                     row.get("cliente_sugerido", ""),
                     row.get("expediente_sugerido", ""),
-                    row.get("match_reason", ""),
+                    row.get("client_match_reason", ""),
                 ]
             )
         )
@@ -654,23 +911,26 @@ def main() -> int:
     )
     parser.add_argument("--notifica-inbox", default=DEFAULT_NOTIFICA_INBOX)
     parser.add_argument("--live-expedientes", default=DEFAULT_LIVE_EXPEDIENTES)
+    parser.add_argument("--client-context-dir", default=DEFAULT_CLIENT_CONTEXT_DIR)
     parser.add_argument("--out-csv", default=DEFAULT_OUT_CSV)
     parser.add_argument("--out-xlsx", default=DEFAULT_OUT_XLSX)
     args = parser.parse_args()
 
-    notifica_inbox = Path(args.notifica_inbox)
-    live_expedientes = Path(args.live_expedientes)
+    notifica_inbox = resolve_existing_path(Path(args.notifica_inbox))
+    live_expedientes = resolve_existing_path(Path(args.live_expedientes))
+    client_context_dir = resolve_existing_path(Path(args.client_context_dir))
     out_csv = Path(args.out_csv)
     out_xlsx = Path(args.out_xlsx)
 
     inbox_csv = read_csv_flexible(notifica_inbox)
     live_csv = read_csv_flexible(live_expedientes)
+    contexts = load_client_contexts(client_context_dir)
     index_columns = detect_index_columns(live_csv.rows)
-    output_rows = build_output_rows(inbox_csv.rows, live_csv.rows)
+    output_rows = build_output_rows(inbox_csv.rows, live_csv.rows, contexts)
 
     write_csv(output_rows, out_csv)
     write_xlsx(output_rows, out_xlsx)
-    print_summary(output_rows, inbox_csv, live_csv, index_columns)
+    print_summary(output_rows, inbox_csv, live_csv, contexts, index_columns)
     print("CSV:", out_csv)
     print("XLSX:", out_xlsx)
 
@@ -679,9 +939,6 @@ def main() -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
-
-
-
 
 
 
